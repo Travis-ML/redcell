@@ -31,3 +31,11 @@ binds:
             stdio:
               cmd: uvx
               args: ["mcp-server-fetch"]
+          # Command/script execution — run_command, run_script. This is real RCE
+          # surface for the agent (and for anything that injects it): run the
+          # gateway in a VM/container or constrained user, and add an allowlist
+          # policy here before pointing untrusted traffic at it.
+          - name: shell
+            stdio:
+              cmd: npx
+              args: ["-y", "mcp-server-commands"]
