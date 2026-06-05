@@ -1,0 +1,45 @@
+[project]
+name = "redcell"
+version = "0.1.0"
+description = "A local-first security testing agent — an observable target for AI-security tooling."
+authors = [{ name = "Streamline AI LLC (dba TravisML.ai)" }]
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.40",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "typer>=0.12",
+    "structlog>=24.1",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "mcp>=1.27.2",
+]
+
+[project.scripts]
+redcell = "redcell.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["redcell"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

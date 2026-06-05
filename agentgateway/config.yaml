@@ -1,0 +1,33 @@
+# AgentGateway config — launched by `uv run redcell serve`.
+# Aggregates the MCP servers below behind one endpoint on :3030 (UI on :15000).
+# You own this file: add policies / auth / observability here for the
+# AI-security tools (Garak, Promptfoo, llm-guard) to exercise.
+binds:
+- port: 3030
+  listeners:
+  - routes:
+    - policies:
+        cors:
+          allowOrigins:
+          - "*"
+          allowHeaders:
+          - mcp-protocol-version
+          - content-type
+          - cache-control
+          exposeHeaders:
+          - "Mcp-Session-Id"
+      backends:
+      - mcp:
+          targets:
+          - name: playwright
+            stdio:
+              cmd: npx
+              args: ["-y", "@playwright/mcp@latest"]
+          - name: filesystem
+            stdio:
+              cmd: npx
+              args: ["-y", "@modelcontextprotocol/server-filesystem", "./agentgateway/sandbox"]
+          - name: fetch
+            stdio:
+              cmd: uvx
+              args: ["mcp-server-fetch"]

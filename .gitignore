@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# Filesystem MCP server scratch space (keep the dir, ignore its contents)
+agentgateway/sandbox/*
+!agentgateway/sandbox/.gitkeep
+
+# Playwright MCP server scratch (traces/output written to CWD)
+.playwright-mcp/
