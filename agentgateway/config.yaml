@@ -23,10 +23,13 @@ binds:
             stdio:
               cmd: npx
               args: ["-y", "@playwright/mcp@latest"]
+          # Filesystem ops — read/write/edit/list — CONFINED to the same Debian
+          # VM over SSH, scoped to a sandbox dir there, so file operations share
+          # the contained environment with `shell` below. The path is on the VM.
           - name: filesystem
             stdio:
-              cmd: npx
-              args: ["-y", "@modelcontextprotocol/server-filesystem", "./agentgateway/sandbox"]
+              cmd: ssh
+              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/redcell/sandbox"]
           - name: fetch
             stdio:
               cmd: uvx
