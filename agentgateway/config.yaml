@@ -29,7 +29,7 @@ binds:
           - name: filesystem
             stdio:
               cmd: ssh
-              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/redcell/sandbox"]
+              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "/home/redcell/.npm-global/bin/mcp-server-filesystem", "/home/redcell/sandbox"]
           - name: fetch
             stdio:
               cmd: uvx
@@ -43,4 +43,4 @@ binds:
           - name: shell
             stdio:
               cmd: ssh
-              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "npx", "-y", "mcp-server-commands"]
+              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "/home/redcell/.npm-global/bin/mcp-server-commands"]
