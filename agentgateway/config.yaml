@@ -31,11 +31,13 @@ binds:
             stdio:
               cmd: uvx
               args: ["mcp-server-fetch"]
-          # Command/script execution — run_command, run_script. This is real RCE
-          # surface for the agent (and for anything that injects it): run the
-          # gateway in a VM/container or constrained user, and add an allowlist
-          # policy here before pointing untrusted traffic at it.
+          # Command/script execution — run_command, run_script — CONFINED to a
+          # dedicated VM over SSH: the server runs there, so commands can only
+          # ever execute there, never on the gateway host. The 'debian-agent' SSH
+          # host alias (IP / user / key) lives in the operator's local
+          # ~/.ssh/config and is intentionally kept out of this repo. Harden the
+          # VM: host-only/NAT networking, non-root user, snapshot-before-use.
           - name: shell
             stdio:
-              cmd: npx
-              args: ["-y", "mcp-server-commands"]
+              cmd: ssh
+              args: ["-T", "-o", "BatchMode=yes", "debian-agent", "npx", "-y", "mcp-server-commands"]
