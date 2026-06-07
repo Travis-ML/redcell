@@ -34,6 +34,20 @@ binds:
             stdio:
               cmd: uvx
               args: ["mcp-server-fetch"]
+          # RAG over a self-hosted Qdrant vector DB via the official MCP server.
+          # Local FastEmbed embeddings; auto-creates the collection. Exposes
+          # qdrant-store (write/poison surface) + qdrant-find (retrieval =
+          # indirect-injection vector). Env is set via the `env` wrapper so it
+          # works regardless of gateway env support.
+          - name: rag
+            stdio:
+              cmd: env
+              args:
+                - "QDRANT_URL=http://localhost:6333"
+                - "COLLECTION_NAME=redcell-kb"
+                - "EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2"
+                - "uvx"
+                - "mcp-server-qdrant"
           # Command/script execution — run_command, run_script — CONFINED to a
           # dedicated VM over SSH: the server runs there, so commands can only
           # ever execute there, never on the gateway host. The 'debian-agent' SSH
