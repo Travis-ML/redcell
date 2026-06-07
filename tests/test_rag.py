@@ -113,3 +113,18 @@ async def test_seed_calls_store_once_per_doc():
 async def test_seed_raises_without_store_tool():
     with pytest.raises(RuntimeError, match="qdrant-store"):
         await seed([], [Doc(id="a", text="t", poisoned=False, canary=None)])
+
+
+async def test_seed_raises_when_store_returns_error_string():
+    # MCP tool calls return failures as "Error: ..." strings (never raise).
+    async def failing_store(**kwargs):
+        return "Error: connection refused"
+
+    failing_store.__name__ = "qdrant-store"
+    store = Tool(
+        failing_store,
+        schema={"type": "object", "properties": {}, "required": []},
+        name="rag_qdrant-store",
+    )
+    with pytest.raises(RuntimeError, match="failed"):
+        await seed([store], [Doc(id="a", text="t", poisoned=False, canary=None)])

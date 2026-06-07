@@ -34,6 +34,16 @@ async def seed(tools: list[Tool], docs: list[Doc]) -> int:
             "no qdrant-store tool found via the gateway — is the 'rag' target up "
             "(redcell serve + Qdrant running)?"
         )
+    # MCPManager tool calls return errors as "Error: ..." strings (they never
+    # raise), so inspect each result rather than trusting the call returned.
+    failures: list[str] = []
     for doc in docs:
-        await store.call(build_store_args(doc))
+        result = await store.call(build_store_args(doc))
+        if isinstance(result, str) and result.startswith("Error:"):
+            failures.append(f"{doc.id}: {result}")
+    if failures:
+        raise RuntimeError(
+            f"{len(failures)}/{len(docs)} qdrant-store calls failed "
+            f"(is Qdrant running?); first: {failures[0]}"
+        )
     return len(docs)
