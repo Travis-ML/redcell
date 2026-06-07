@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
 import uvicorn
@@ -15,6 +16,8 @@ from .gateway import GatewaySupervisor
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
+from .rag.corpus import default_corpus_path, load_corpus
+from .rag.seed import seed as rag_seed_corpus
 from .searxng import make_web_search
 from .server import create_app
 from .tools import ToolRegistry, tool
@@ -102,6 +105,24 @@ def serve(
     if gateway is not None:
         typer.echo(f"  gateway: launching '{settings.gateway_bin}' on :{settings.gateway_port}")
     uvicorn.run(api, host=bind_host, port=bind_port)
+
+
+@app.command()
+def rag_seed(
+    corpus: str = typer.Option(None, "--corpus", help="Corpus JSON path (default: bundled)."),
+) -> None:
+    """Load the RAG corpus into the store via the running gateway's qdrant-store tool."""
+    settings = Settings()
+    configure_logging(settings.log_level)
+    path = Path(corpus) if corpus else default_corpus_path()
+    docs = load_corpus(path)
+
+    async def _run() -> int:
+        async with MCPManager(lambda: streamable_http_session(settings.gateway_url)) as mgr:
+            return await rag_seed_corpus(mgr.tools(), docs)
+
+    count = asyncio.run(_run())
+    typer.echo(f"seeded {count} docs into the RAG store via {settings.gateway_url}")
 
 
 @app.command()
