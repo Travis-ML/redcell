@@ -65,6 +65,25 @@ gateway can't start, `serve` runs with builtin tools only. Every MCP tool call
 routes through the gateway — the choke point that makes redcell a useful test
 subject.
 
+## RAG knowledge base (Qdrant)
+
+redcell ships an enterprise-standard RAG surface: a self-hosted **Qdrant** vector
+DB behind the official **`mcp-server-qdrant`** (local FastEmbed embeddings),
+exposed as the gateway `rag` target with `qdrant-store` and `qdrant-find`.
+
+```bash
+docker compose up -d qdrant     # start Qdrant on :6333
+uv run redcell serve            # brings up the gateway + rag target
+uv run redcell rag-seed         # load the bundled corpus into the store
+```
+
+The bundled corpus (`redcell/rag/corpus/seed_corpus.json`) mixes benign docs with
+**planted poison docs** carrying unique canary IDs. Because retrieval routes
+through the gateway, you can see whether a retrieved poison doc actually drove a
+`shell`/`filesystem` action — the canary appearing in a tool call (or a
+`RC-CANARY-*.txt` file in the VM sandbox) is measurable injection success. This is
+the **indirect prompt injection** surface for tools like Garak/Promptfoo to probe.
+
 ## Development
 
 ```bash
