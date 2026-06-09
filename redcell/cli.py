@@ -13,14 +13,23 @@ from . import __version__
 from .agent import Agent
 from .config import Settings
 from .gateway import GatewaySupervisor
+from .guardrails import make_guardrail
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
+from .prompts import build_system_prompt
 from .rag.corpus import default_corpus_path, load_corpus
 from .rag.seed import seed as rag_seed_corpus
 from .searxng import make_web_search
 from .server import create_app
+from .sessions import SessionStore
 from .tools import ToolRegistry, tool
+
+
+def _denied_mcp_tools(settings: Settings) -> set[str]:
+    """Parse AGENT_MCP_TOOL_DENYLIST into a set of tool names to drop."""
+    return {name.strip() for name in settings.mcp_tool_denylist.split(",") if name.strip()}
+
 
 app = typer.Typer(help="redcell command-line interface.")
 
@@ -62,10 +71,13 @@ def serve(
     configure_logging(settings.log_level)
 
     manager = MCPManager(lambda: streamable_http_session(settings.gateway_url))
+    denied = _denied_mcp_tools(settings)
 
     def build_agent() -> Agent:
         tools = default_tools(settings)
         for t in manager.tools():  # gateway-provided MCP tools (empty if offline)
+            if t.name in denied:  # operator-disabled vulnerable surface
+                continue
             tools.register(t)
         return Agent(
             llm=LLM(
@@ -76,9 +88,10 @@ def serve(
                 api_key=settings.api_key,
             ),
             tools=tools,
-            system_prompt="You are a helpful assistant.",
+            system_prompt=build_system_prompt(safety=settings.safety_prompt),
             hooks=logging_hooks(),
             max_iterations=settings.max_iterations,
+            guardrail=make_guardrail(settings.guardrails),
         )
 
     gateway = None
@@ -90,16 +103,28 @@ def serve(
             ready_timeout=settings.gateway_ready_timeout,
         )
 
+    session_store = SessionStore(
+        max_sessions=settings.session_max,
+        ttl_seconds=settings.session_ttl_seconds,
+    )
+
     api = create_app(
         build_agent,
         model_id=settings.model_id,
         api_key=settings.server_api_key,
         gateway=gateway,
         mcp_manager=manager,
+        session_store=session_store,
+        session_header=settings.session_header,
     )
     bind_host = host or settings.server_host
     bind_port = port or settings.server_port
     typer.echo(f"Serving agent ({settings.model}) as model '{settings.model_id}'.")
+    typer.echo(
+        f"  security: safety_prompt={'on' if settings.safety_prompt else 'off'}, "
+        f"guardrails={'on' if settings.guardrails else 'off'}"
+        + (f", denied tools: {', '.join(sorted(denied))}" if denied else "")
+    )
     typer.echo(f"  local:  http://127.0.0.1:{bind_port}/v1")
     typer.echo(f"  docker: http://host.docker.internal:{bind_port}/v1  (use this in Open WebUI)")
     if gateway is not None:
@@ -139,9 +164,10 @@ def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--sy
             api_key=settings.api_key,
         ),
         tools=default_tools(settings),
-        system_prompt=system_prompt,
+        system_prompt=build_system_prompt(system_prompt, safety=settings.safety_prompt),
         hooks=logging_hooks(),
         max_iterations=settings.max_iterations,
+        guardrail=make_guardrail(settings.guardrails),
     )
 
     typer.echo(f"redcell chat ({settings.model}). Ctrl-C to exit.")

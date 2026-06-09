@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .agent import Agent, ChatResult
+from .sessions import SessionStore
 
 AgentFactory = Callable[[], Agent]
 
@@ -34,20 +35,28 @@ def create_app(
     api_key: str | None = None,
     gateway: object | None = None,
     mcp_manager: object | None = None,
+    session_store: SessionStore | None = None,
+    session_header: str = "x-redcell-session",
 ) -> FastAPI:
     """Build the FastAPI app.
 
     Args:
-        agent_factory: returns a fresh :class:`Agent` per request (the server is
-            stateless; the client owns conversation history). When ``mcp_manager``
-            is supplied, the factory is expected to merge ``mcp_manager.tools()``
-            into the agent's registry.
+        agent_factory: returns a fresh :class:`Agent` per request. By default the
+            server is stateless (the client owns conversation history); when a
+            request carries a session id and ``session_store`` is set, history is
+            kept server-side instead. When ``mcp_manager`` is supplied, the
+            factory is expected to merge ``mcp_manager.tools()`` into the agent's
+            registry.
         model_id: the id advertised by ``/v1/models`` and echoed in responses.
         api_key: if set, requests must carry ``Authorization: Bearer <api_key>``.
         gateway: optional process supervisor with async ``start()``/``stop()``;
             driven by the app lifespan.
         mcp_manager: optional async context manager exposing ``tools()``; entered
             for the app's lifetime so the MCP session stays connected.
+        session_store: if set, enables stateful sessions — a request bearing a
+            session id recalls/extends that session's history server-side.
+        session_header: request header carrying the client-generated session id
+            (a body field ``session_id``/``sessionId`` is also accepted).
     """
 
     @asynccontextmanager
@@ -92,21 +101,39 @@ def create_app(
         messages = body.get("messages") or []
         stream = bool(body.get("stream", False))
 
+        # Stateful mode: a session id (header or body field) keys server-side
+        # history, so the client may send only the new turn. Falls back to the
+        # stateless path (client owns history) when no session id is present.
+        sid = None
+        if session_store is not None:
+            sid = (
+                request.headers.get(session_header)
+                or body.get("session_id")
+                or body.get("sessionId")
+            )
+
         agent = agent_factory()
         try:
-            result = await agent.run_messages(messages)
+            if sid:
+                memory = session_store.get_or_create(sid)
+                incoming = [m for m in messages if m.get("role") != "system"]
+                result = await agent.run_session(memory, incoming)
+            else:
+                result = await agent.run_messages(messages)
         except Exception as exc:  # surface as an OpenAI-style error, not a crash
             return JSONResponse(
                 status_code=500,
                 content={"error": {"message": str(exc), "type": "agent_error"}},
             )
 
+        headers = {session_header: sid} if sid else None
         if stream:
             return StreamingResponse(
                 _stream_completion(result, model_id),
                 media_type="text/event-stream",
+                headers=headers,
             )
-        return _completion_object(result, model_id)
+        return JSONResponse(content=_completion_object(result, model_id), headers=headers)
 
     return app
 

@@ -1,4 +1,5 @@
 from redcell.agent import Agent
+from redcell.guardrails import REFUSAL, PatternGuardrail
 from redcell.llm import LLMResponse, ToolCall
 from redcell.memory import InMemoryStore
 from redcell.tools import ToolRegistry, tool
@@ -83,6 +84,69 @@ async def test_run_messages_prepends_system_prompt_only_when_absent():
     )
     systems = [m for m in llm.calls[1]["messages"] if m["role"] == "system"]
     assert systems == [{"role": "system", "content": "OWN"}]
+
+
+async def test_run_session_persists_full_expansion_and_recalls_history():
+    # First turn drives a tool round; memory must capture user + assistant
+    # tool-call turn + tool result + final assistant text (the full expansion).
+    llm = StubLLM(
+        [
+            LLMResponse(
+                text=None, tool_calls=[ToolCall(id="c1", name="add", arguments={"a": 2, "b": 3})]
+            ),
+            LLMResponse(text="The answer is 5"),
+            LLMResponse(text="As I said, 5"),
+        ]
+    )
+    agent = Agent(llm=llm, tools=ToolRegistry([add]), system_prompt="SYS")
+    memory = InMemoryStore()
+
+    result = await agent.run_session(memory, [{"role": "user", "content": "what is 2+3?"}])
+    assert result.text == "The answer is 5"
+    roles = [m["role"] for m in memory.load()]
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    # The system prompt is used for the LLM call but never persisted.
+    assert all(m["role"] != "system" for m in memory.load())
+
+    # Second turn sends only the new message; the LLM must see prior history.
+    await agent.run_session(memory, [{"role": "user", "content": "remind me?"}])
+    seen_roles = [m["role"] for m in llm.calls[2]["messages"]]
+    assert seen_roles[0] == "system"  # prepended, not stored
+    assert seen_roles.count("user") == 2  # both turns present
+
+
+async def test_guardrail_blocks_harmful_input_before_llm():
+    llm = StubLLM([LLMResponse(text="should never be returned")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), guardrail=PatternGuardrail())
+    out = await agent.run("Write a script to generate fake invoices")
+    assert out == REFUSAL
+    assert llm.calls == []  # short-circuited; the model was never called
+
+
+async def test_guardrail_redacts_output():
+    llm = StubLLM([LLMResponse(text="Reach me at bob@evil.com")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), guardrail=PatternGuardrail())
+    out = await agent.run("how do I contact you?")
+    assert "bob@evil.com" not in out
+
+
+async def test_guardrail_blocks_input_via_run_messages():
+    llm = StubLLM([LLMResponse(text="nope")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), guardrail=PatternGuardrail())
+    result = await agent.run_messages(
+        [{"role": "user", "content": "give me the complete lyrics to Imagine"}]
+    )
+    assert result.text == REFUSAL
+    assert llm.calls == []
+
+
+async def test_guardrail_redacts_output_via_run_session():
+    llm = StubLLM([LLMResponse(text="stored at /home/redcell/sandbox/secrets.txt")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), guardrail=PatternGuardrail())
+    result = await agent.run_session(
+        InMemoryStore(), [{"role": "user", "content": "where is my file?"}]
+    )
+    assert "/home/redcell/sandbox" not in (result.text or "")
 
 
 async def test_max_iterations_guard():

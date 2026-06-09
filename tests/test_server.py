@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from redcell.agent import Agent
 from redcell.llm import LLMResponse, ToolCall
 from redcell.server import create_app
+from redcell.sessions import SessionStore
 from redcell.tools import Tool, ToolRegistry, tool
 from tests.conftest import StubLLM
 
@@ -210,6 +211,120 @@ def test_gateway_tool_is_callable_through_the_endpoint():
             json={"model": "redcell", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.json()["choices"][0]["message"]["content"] == "done"
+
+
+def make_session_client(scripted, **app_kwargs):
+    """A TestClient backed by a shared StubLLM and an enabled SessionStore.
+
+    The single ``llm`` is reused across requests so ``llm.calls`` accumulates and
+    tests can assert what history a later turn's LLM call actually saw.
+    """
+    llm = StubLLM(list(scripted))
+    store = SessionStore()
+
+    def factory():
+        return Agent(llm=llm, tools=ToolRegistry(), system_prompt="SYS")
+
+    client = TestClient(create_app(factory, model_id="redcell", session_store=store, **app_kwargs))
+    return client, llm, store
+
+
+def _contents(messages):
+    return [m.get("content") for m in messages]
+
+
+def test_session_remembers_history_across_requests():
+    client, llm, store = make_session_client(
+        [LLMResponse(text="noted"), LLMResponse(text="you are Travis")]
+    )
+    sid = "conv-1"
+    r1 = client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": sid},
+        json={"model": "redcell", "messages": [{"role": "user", "content": "My name is Travis."}]},
+    )
+    assert r1.status_code == 200
+    assert r1.headers["x-redcell-session"] == sid  # echoed back
+
+    r2 = client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": sid},
+        json={"model": "redcell", "messages": [{"role": "user", "content": "What is my name?"}]},
+    )
+    assert r2.status_code == 200
+    # The second turn's LLM call saw the first turn (user message + stored reply).
+    second = _contents(llm.calls[1]["messages"])
+    assert "My name is Travis." in second
+    assert "noted" in second
+    assert len(store) == 1
+
+
+def test_distinct_sessions_are_isolated():
+    client, llm, _ = make_session_client([LLMResponse(text="a-reply"), LLMResponse(text="b-reply")])
+    client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": "A"},
+        json={"model": "redcell", "messages": [{"role": "user", "content": "secret-A"}]},
+    )
+    client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": "B"},
+        json={"model": "redcell", "messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert "secret-A" not in _contents(llm.calls[1]["messages"])
+
+
+def test_no_session_header_is_stateless():
+    client, llm, store = make_session_client([LLMResponse(text="r1"), LLMResponse(text="r2")])
+    client.post(
+        "/v1/chat/completions",
+        json={"model": "redcell", "messages": [{"role": "user", "content": "remember X"}]},
+    )
+    r2 = client.post(
+        "/v1/chat/completions",
+        json={"model": "redcell", "messages": [{"role": "user", "content": "what?"}]},
+    )
+    assert "remember X" not in _contents(llm.calls[1]["messages"])
+    assert len(store) == 0  # nothing stored without a session id
+    assert "x-redcell-session" not in r2.headers
+
+
+def test_session_id_from_body_field():
+    client, llm, store = make_session_client(
+        [LLMResponse(text="noted"), LLMResponse(text="recall")]
+    )
+    for content in ("fact one", "again"):
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "redcell",
+                "session_id": "conv-b",
+                "messages": [{"role": "user", "content": content}],
+            },
+        )
+    assert "fact one" in _contents(llm.calls[1]["messages"])
+    assert len(store) == 1
+
+
+def test_session_streaming_persists_turn():
+    client, llm, _ = make_session_client([LLMResponse(text="hello"), LLMResponse(text="again")])
+    r1 = client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": "s"},
+        json={
+            "model": "redcell",
+            "stream": True,
+            "messages": [{"role": "user", "content": "first"}],
+        },
+    )
+    assert r1.headers["x-redcell-session"] == "s"
+    client.post(
+        "/v1/chat/completions",
+        headers={"x-redcell-session": "s"},
+        json={"model": "redcell", "messages": [{"role": "user", "content": "second"}]},
+    )
+    # The streamed first turn was persisted, so the second turn's LLM sees it.
+    assert "first" in _contents(llm.calls[1]["messages"])
 
 
 def test_startup_failure_still_stops_gateway():

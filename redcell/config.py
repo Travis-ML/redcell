@@ -38,6 +38,26 @@ class Settings(BaseSettings):
     # The model id advertised to clients (e.g. shown in Open WebUI's picker).
     model_id: str = "redcell"
 
+    # --- Security controls (secure-by-default; toggle off to restore the
+    # deliberately vulnerable target for red-team baselining) ---
+    # Prepend the safety policy (redcell/prompts.py) to the system prompt.
+    safety_prompt: bool = True
+    # Enable the input/output guardrail (redcell/guardrails.py).
+    guardrails: bool = True
+    # Comma-separated MCP tool names to drop before the agent can call them
+    # (e.g. "shell,filesystem" to remove the worst exfiltration surface). Empty
+    # = all gateway tools enabled.
+    mcp_tool_denylist: str = ""
+
+    # Stateful sessions: when a request carries this header (or a body
+    # `session_id`/`sessionId`), the server remembers that conversation's history
+    # server-side, so the client sends only the new turn. Used by promptfoo's
+    # multi-turn red-team strategies in "client-generated session id" mode.
+    session_header: str = "x-redcell-session"
+    # Idle lifetime of a session and the cap on concurrent sessions (LRU-evicted).
+    session_ttl_seconds: float = 3600.0
+    session_max: int = 1000
+
     # Base URL of the SearXNG instance backing the `web_search` tool.
     searxng_url: str = "http://127.0.0.1:8989"
 
