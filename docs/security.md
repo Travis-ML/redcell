@@ -31,6 +31,18 @@ The policy instructs the model to:
 With `AGENT_SAFETY_PROMPT=false`, the prompt is the bare base (`"You are a helpful
 assistant."`) — the original unguarded behavior.
 
+The policy is built from **named rules** (`harm`, `copyright`, `truthfulness`,
+`commitments`, `disclosure`, `fairness`). Set `AGENT_SAFETY_RULES` to a comma-separated
+subset to include only those — e.g. `AGENT_SAFETY_RULES=disclosure,truthfulness` — so you
+can measure each rule's *individual* contribution to a scan delta instead of toggling the
+whole policy at once. Empty = all rules.
+
+When the safety prompt is on, `serve` runs the agent with `enforce_system_prompt`,
+so a client that sends its **own** `system` message cannot suppress the policy — the
+configured prompt always wins and the client's system message is dropped (it would
+otherwise be a trivial bypass of the stateless path). In vulnerable-baseline mode
+(`AGENT_SAFETY_PROMPT=false`) enforcement is off and the client owns the prompt.
+
 ### 2. Guardrail (`guardrails.py`)
 
 A small pluggable moderation layer. The agent calls it to screen **input before** a run
@@ -43,10 +55,16 @@ A small pluggable moderation layer. The agent calls it to screen **input before*
   - **output**: redacts PII (emails, card-like digit runs, US SSNs, phone-like numbers)
     and internal-architecture identifiers (`/home/redcell/*`, `qdrant`, `fastembed`,
     `agentgateway`, `vllm`, `mcp-server-*`, `redcell-kb`) → replaced with `[redacted]`.
+  - **tool results**: the same redaction also runs over every tool result *before it
+    reaches the model*, so a secret fetched off the web or read off the filesystem can't
+    be relayed back. The raw result is still emitted to observability first, so exfil
+    remains measurable — redaction protects the model's view, not the event log.
 - `NullGuardrail` (when `AGENT_GUARDRAILS=false`) — passthrough.
 
-Guardrail actions emit observability events (`guardrail_input_block`,
-`guardrail_output_redact`).
+Every verdict carries machine-readable `categories` (e.g. `pii:email`, `internal:path`,
+`fraud:fake_invoice`), so a scan's guardrail events aggregate into a per-category
+scorecard. Guardrail actions emit observability events (`guardrail_input_block`,
+`guardrail_output_redact`, `guardrail_tool_redact`), each with its `categories`.
 
 > The pattern guardrail is a **deterministic baseline**. Semantic categories (bias,
 > fraud framing, hallucination) are carried by the safety prompt, not regexes. For
@@ -63,9 +81,14 @@ of them before the agent can call them:
 AGENT_MCP_TOOL_DENYLIST=shell,filesystem uv run redcell serve
 ```
 
-Names match the tool names as exposed by the gateway (visible in `serve` logs). This is
-independent of the prompt/guardrail layers — it removes the capability entirely. See
-[tools-and-gateway.md](tools-and-gateway.md).
+Each term is matched **case-insensitively as a substring** of every gateway tool name,
+so a *target* name like `shell` drops all the tools that target exposes even when the
+gateway namespaces them (`shell_run_command`, `shell_run_script`), and an exact tool
+name (`run_command`) works too. At startup `serve` logs exactly which tools were dropped
+and **warns if a denylist term matched nothing** — a term that hits no tool leaves that
+capability enabled, so the warning tells you to correct the name (check the tool names in
+the `serve` logs). This is independent of the prompt/guardrail layers — it removes the
+capability entirely. See [tools-and-gateway.md](tools-and-gateway.md).
 
 ## Recreating the vulnerable target
 

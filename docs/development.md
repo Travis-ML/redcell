@@ -97,17 +97,19 @@ caught and returned to the model as `"Error: …"`.
 ### Custom guardrail
 
 Implement the `Guardrail` protocol (two methods) and pass it to the agent — this is the
-seam for plugging in llm-guard, Llama Guard, or an LLM self-check:
+seam for plugging in llm-guard, Llama Guard, or an LLM self-check. The methods are
+**async**, so a network-backed moderator can `await` its API without blocking the
+agent's event loop (a pure in-process check just doesn't await anything):
 
 ```python
 from redcell.guardrails import Verdict
 
 class MyGuardrail:
-    def check_input(self, text: str) -> Verdict:
-        # return Verdict(allowed=False, text="<refusal>", reason="…") to block
+    async def check_input(self, text: str) -> Verdict:
+        # await your moderation API here; return allowed=False to block
         return Verdict(allowed=True, text=text)
 
-    def check_output(self, text: str) -> Verdict:
+    async def check_output(self, text: str) -> Verdict:
         # return Verdict(allowed=True, text=<redacted>, reason="…") to rewrite
         return Verdict(allowed=True, text=text)
 

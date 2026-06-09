@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,12 +24,43 @@ from .rag.seed import seed as rag_seed_corpus
 from .searxng import make_web_search
 from .server import create_app
 from .sessions import SessionStore
-from .tools import ToolRegistry, tool
+from .tools import Tool, ToolRegistry, tool
 
 
 def _denied_mcp_tools(settings: Settings) -> set[str]:
-    """Parse AGENT_MCP_TOOL_DENYLIST into a set of tool names to drop."""
-    return {name.strip() for name in settings.mcp_tool_denylist.split(",") if name.strip()}
+    """Parse AGENT_MCP_TOOL_DENYLIST into a set of lowercased match terms."""
+    return {name.strip().lower() for name in settings.mcp_tool_denylist.split(",") if name.strip()}
+
+
+def _safety_rules(settings: Settings) -> list[str] | None:
+    """Parse AGENT_SAFETY_RULES; None (empty) means include all rules."""
+    names = [name.strip() for name in settings.safety_rules.split(",") if name.strip()]
+    return names or None
+
+
+def apply_denylist(tools: list[Tool], denied: set[str]) -> tuple[list[Tool], list[str]]:
+    """Split ``tools`` into (kept, dropped_names) using substring matching.
+
+    A denylist entry matches any tool whose (lowercased) name *contains* it, so a
+    gateway *target* name like ``shell`` drops every tool that target exposes even
+    when the gateway namespaces them (e.g. ``shell_run_command``), and an exact
+    tool name like ``run_command`` also works. Exact-only matching silently failed
+    on namespaced names — a denied capability that stayed enabled.
+    """
+    kept: list[Tool] = []
+    dropped: list[str] = []
+    for t in tools:
+        if any(term in t.name.lower() for term in denied):
+            dropped.append(t.name)
+        else:
+            kept.append(t)
+    return kept, dropped
+
+
+def unmatched_denylist(tool_names: list[str], denied: set[str]) -> list[str]:
+    """Denylist terms that matched no tool — likely a typo or wrong name."""
+    lowered = [n.lower() for n in tool_names]
+    return sorted(term for term in denied if not any(term in n for n in lowered))
 
 
 app = typer.Typer(help="redcell command-line interface.")
@@ -68,17 +100,32 @@ def serve(
 ) -> None:
     """Run the OpenAI-compatible HTTP server (launches AgentGateway too)."""
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
 
     manager = MCPManager(lambda: streamable_http_session(settings.gateway_url))
     denied = _denied_mcp_tools(settings)
+    denylist_reported: list[bool] = []  # one-shot guard for the startup summary
 
     def build_agent() -> Agent:
         tools = default_tools(settings)
-        for t in manager.tools():  # gateway-provided MCP tools (empty if offline)
-            if t.name in denied:  # operator-disabled vulnerable surface
-                continue
+        gateway_tools = manager.tools()  # gateway-provided MCP tools (empty if offline)
+        kept, dropped = apply_denylist(gateway_tools, denied)
+        for t in kept:
             tools.register(t)
+        if denied and not denylist_reported:
+            # Log once, after discovery, so a denylist that matched nothing is
+            # loud rather than a silently-enabled "denied" capability.
+            denylist_reported.append(True)
+            log = logging.getLogger("redcell.cli")
+            log.info("denylist dropped %d MCP tool(s): %s", len(dropped), ", ".join(dropped) or "—")
+            stale = unmatched_denylist([t.name for t in gateway_tools], denied)
+            if stale:
+                log.warning(
+                    "denylist term(s) matched no gateway tool: %s "
+                    "(tools seen: %s) — capability NOT removed; check names in serve logs",
+                    ", ".join(stale),
+                    ", ".join(t.name for t in gateway_tools) or "none",
+                )
         return Agent(
             llm=LLM(
                 settings.model,
@@ -88,10 +135,15 @@ def serve(
                 api_key=settings.api_key,
             ),
             tools=tools,
-            system_prompt=build_system_prompt(safety=settings.safety_prompt),
+            system_prompt=build_system_prompt(
+                safety=settings.safety_prompt, rules=_safety_rules(settings)
+            ),
             hooks=logging_hooks(),
             max_iterations=settings.max_iterations,
             guardrail=make_guardrail(settings.guardrails),
+            # When safety is on, the policy must not be suppressible by a client
+            # sending its own system message (the stateless-path bypass).
+            enforce_system_prompt=settings.safety_prompt,
         )
 
     gateway = None
@@ -138,7 +190,7 @@ def rag_seed(
 ) -> None:
     """Load the RAG corpus into the store via the running gateway's qdrant-store tool."""
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
     path = Path(corpus) if corpus else default_corpus_path()
     docs = load_corpus(path)
 
@@ -154,7 +206,7 @@ def rag_seed(
 def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--system")) -> None:
     """Start an interactive chat session with a basic agent."""
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
     agent = Agent(
         llm=LLM(
             settings.model,
@@ -164,7 +216,9 @@ def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--sy
             api_key=settings.api_key,
         ),
         tools=default_tools(settings),
-        system_prompt=build_system_prompt(system_prompt, safety=settings.safety_prompt),
+        system_prompt=build_system_prompt(
+            system_prompt, safety=settings.safety_prompt, rules=_safety_rules(settings)
+        ),
         hooks=logging_hooks(),
         max_iterations=settings.max_iterations,
         guardrail=make_guardrail(settings.guardrails),

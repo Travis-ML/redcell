@@ -117,7 +117,8 @@ def create_app(
             if sid:
                 memory = session_store.get_or_create(sid)
                 incoming = [m for m in messages if m.get("role") != "system"]
-                result = await agent.run_session(memory, incoming)
+                # Tag this turn's events with the session id for attribution.
+                result = await agent.run_session(memory, incoming, correlation_id=sid)
             else:
                 result = await agent.run_messages(messages)
         except Exception as exc:  # surface as an OpenAI-style error, not a crash

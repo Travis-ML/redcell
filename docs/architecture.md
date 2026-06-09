@@ -34,7 +34,12 @@ touching the agent loop.
   a failing tool call never crashes a turn — they log and the agent continues with
   whatever tools are available, surfacing tool errors back to the model as strings.
 - **Observable.** Every LLM call, tool call, and guardrail action emits a `Hooks`
-  event; every MCP tool call routes through the gateway choke point.
+  event tagged with a per-turn `run_id` (the session id for stateful turns), so a
+  turn's events stay attributable even when many sessions interleave. `tool_end`
+  carries the call `duration_ms` and the (truncated) tool result, making injection
+  success — e.g. a RAG canary surfacing in a tool's output — visible in the event
+  stream itself. Set `AGENT_LOG_JSON=true` (+ `AGENT_LOG_FILE`) for a JSONL event
+  sink per scan. Every MCP tool call also routes through the gateway choke point.
 - **Secure-by-default, toggleable.** Safety prompt and guardrail are on; each
   vulnerable surface is a single config switch (see [security.md](security.md)).
 

@@ -26,6 +26,8 @@ The env var for any field is `AGENT_` + the field name upper-cased
 | `AGENT_MAX_TOKENS` | int | `1024` | Max tokens per completion. |
 | `AGENT_MAX_ITERATIONS` | int | `25` | Hard cap on tool-call rounds per turn. Prevents infinite tool loops. |
 | `AGENT_LOG_LEVEL` | str | `INFO` | Log level for structlog/stdlib (`DEBUG`/`INFO`/`WARNING`/…). |
+| `AGENT_LOG_JSON` | bool | `false` | Render structured events as JSON instead of the console format. |
+| `AGENT_LOG_FILE` | str? | _(unset)_ | Write events to this file (append) instead of stderr. With `AGENT_LOG_JSON=true` this is a JSONL event sink per scan. |
 
 ### `AGENT_MODEL` examples
 
@@ -67,8 +69,9 @@ detail in [security.md](security.md).
 | Env var | Type | Default | Off = |
 |---------|------|---------|-------|
 | `AGENT_SAFETY_PROMPT` | bool | `true` | Bare "helpful assistant" prompt; no refusals/policy. |
-| `AGENT_GUARDRAILS` | bool | `true` | No input blocking or output redaction. |
-| `AGENT_MCP_TOOL_DENYLIST` | str (csv) | _(empty)_ | All gateway tools enabled. Set e.g. `shell,filesystem` to drop dangerous tools. |
+| `AGENT_GUARDRAILS` | bool | `true` | No input blocking or output/tool-result redaction. |
+| `AGENT_SAFETY_RULES` | str (csv) | _(empty)_ | Subset of named safety rules to include (empty = all): `harm,copyright,truthfulness,commitments,disclosure,fairness`. Isolate rules to measure each one's scan-delta contribution. |
+| `AGENT_MCP_TOOL_DENYLIST` | str (csv) | _(empty)_ | All gateway tools enabled. Set e.g. `shell,filesystem` to drop dangerous tools (substring-matched; zero-match terms warn at startup). |
 
 Booleans accept the usual Pydantic forms: `true/false`, `1/0`, `yes/no`.
 

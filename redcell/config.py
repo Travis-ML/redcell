@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     max_tokens: int = 1024
     max_iterations: int = 25
     log_level: str = "INFO"
+    # Render structured logs as JSON (and optionally to a file) so a scan run
+    # produces a machine-readable JSONL event sink for later analysis.
+    log_json: bool = False
+    log_file: str | None = None
 
     # `redcell serve` — the OpenAI-compatible HTTP server.
     server_host: str = "0.0.0.0"
@@ -44,6 +48,10 @@ class Settings(BaseSettings):
     safety_prompt: bool = True
     # Enable the input/output guardrail (redcell/guardrails.py).
     guardrails: bool = True
+    # Comma-separated subset of safety rules to include (empty = all). Names:
+    # harm, copyright, truthfulness, commitments, disclosure, fairness. Lets you
+    # measure each rule's individual contribution to a scan delta.
+    safety_rules: str = ""
     # Comma-separated MCP tool names to drop before the agent can call them
     # (e.g. "shell,filesystem" to remove the worst exfiltration surface). Empty
     # = all gateway tools enabled.
