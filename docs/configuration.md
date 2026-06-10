@@ -25,6 +25,8 @@ The env var for any field is `AGENT_` + the field name upper-cased
 | `AGENT_TEMPERATURE` | float | `0.7` | Sampling temperature passed to the model. |
 | `AGENT_MAX_TOKENS` | int | `1024` | Max tokens per completion. |
 | `AGENT_MAX_ITERATIONS` | int | `25` | Hard cap on tool-call rounds per turn. Prevents infinite tool loops. |
+| `AGENT_CONTEXT_WINDOW` | int | `0` | Model context window in tokens. `0` disables auto-compaction; set it to your model's window (e.g. `8192`) so long runs don't overflow — old turns are summarized, a recent tail kept verbatim, and a real overflow triggers a compact-and-retry. |
+| `AGENT_COMPACT_RATIO` | float | `0.8` | Fraction of the window at which compaction kicks in. |
 | `AGENT_LLM_MAX_RETRIES` | int | `5` | Retries for transient LLM errors (429/5xx/connection). `0` disables. Honors `Retry-After`; never retries 4xx/auth/validation. |
 | `AGENT_LLM_RETRY_BASE_DELAY` | float | `0.5` | Base seconds for exponential backoff (`min(base·2^(n-1), max)` + ≤25% jitter). |
 | `AGENT_LLM_RETRY_MAX_DELAY` | float | `30.0` | Cap on a single backoff delay (seconds). |

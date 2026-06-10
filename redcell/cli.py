@@ -250,6 +250,8 @@ def serve(
             max_iterations=settings.max_iterations,
             guardrail=make_guardrail(settings.guardrails),
             policy=make_policy(settings),
+            context_window=settings.context_window,
+            compact_ratio=settings.compact_ratio,
             # When safety is on, the policy must not be suppressible by a client
             # sending its own system message (the stateless-path bypass).
             enforce_system_prompt=settings.safety_prompt,
@@ -380,6 +382,8 @@ def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--sy
         max_iterations=settings.max_iterations,
         guardrail=make_guardrail(settings.guardrails),
         policy=make_policy(settings),
+        context_window=settings.context_window,
+        compact_ratio=settings.compact_ratio,
     )
 
     typer.echo(f"redcell chat ({settings.model}). Ctrl-C to exit.")

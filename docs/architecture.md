@@ -75,6 +75,13 @@ prepend system prompt ─▶ ┌────────────────
 - **LLM calls retry** transient errors (429/5xx/connection) with exponential
   backoff + jitter, honoring `Retry-After`; 4xx/auth/validation errors fail fast
   (`AGENT_LLM_MAX_RETRIES`, default `5`).
+- **Context compaction** (`compaction.py`, when `AGENT_CONTEXT_WINDOW` > 0) keeps a
+  long run under the window: before each call, if the estimate crosses the
+  threshold it first clears old tool-result bodies (microcompact, no LLM call) and,
+  if still over, summarizes the old prefix while keeping a recent tail verbatim —
+  snapping the split so a `tool` result is never orphaned from its `tool_calls`
+  turn. A real provider overflow triggers a forced compact-and-retry. The summary
+  is ephemeral to the LLM view; stored memory keeps the real turns.
 - **Tool execution is partitioned**: consecutive concurrency-safe (read-only)
   calls run in parallel under a bounded pool; a mutating call runs alone as a
   barrier, so a same-turn write+read (or two writes) can't race. Result order

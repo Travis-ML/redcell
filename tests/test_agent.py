@@ -402,6 +402,58 @@ async def test_async_guardrail_is_awaited():
     assert llm.calls == []  # blocked before the model was called
 
 
+async def test_proactive_compaction_summarizes_when_over_budget():
+    # A big history over the window triggers: summarize call, then the real turn.
+    big = "x" * 4000  # ~1000 tokens
+    history = [
+        {"role": "user", "content": big},
+        {"role": "assistant", "content": big},
+        {"role": "user", "content": "what now?"},
+    ]
+    llm = StubLLM([LLMResponse(text="SUMMARY OF EARLIER"), LLMResponse(text="final answer")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), context_window=200)  # tiny window
+    result = await agent.run_messages(history)
+    assert result.text == "final answer"
+    # The summarization call happened first (COMPACT_PROMPT present).
+    from redcell.compaction import COMPACT_PROMPT
+
+    assert any(COMPACT_PROMPT in (m.get("content") or "") for m in llm.calls[0]["messages"])
+    # The real turn saw the compacted history (the summary, not the full big text).
+    real_contents = " ".join(str(m.get("content")) for m in llm.calls[1]["messages"])
+    assert "SUMMARY OF EARLIER" in real_contents
+
+
+async def test_no_compaction_when_window_disabled():
+    history = [{"role": "user", "content": "x" * 8000}]
+    llm = StubLLM([LLMResponse(text="ok")])
+    agent = Agent(llm=llm, tools=ToolRegistry(), context_window=0)  # disabled
+    await agent.run_messages(history)
+    # Only one LLM call (no summarization) and it saw the full input.
+    assert len(llm.calls) == 1
+
+
+async def test_reactive_compaction_on_context_overflow():
+    class OverflowThenOK:
+        model = "m"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def complete(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise type("ContextWindowExceededError", (Exception,), {})("prompt too long")
+            return LLMResponse(text="recovered")
+
+    history = [{"role": "user", "content": "x" * 4000}, {"role": "user", "content": "go"}]
+    llm = OverflowThenOK()
+    # Window > estimate so proactive doesn't fire; the overflow drives reactive.
+    agent = Agent(llm=llm, tools=ToolRegistry(), context_window=100000)
+    result = await agent.run_messages(history)
+    assert result.text == "recovered"
+    assert llm.calls == 2  # failed once, compacted, retried
+
+
 async def test_max_iterations_guard():
     # Always asks for a tool call -> would loop forever without the guard.
     looping = [

@@ -8,6 +8,14 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .compaction import (
+    COMPACT_PROMPT,
+    build_compacted,
+    estimate_tokens,
+    is_context_overflow,
+    microcompact,
+    safe_split_index,
+)
 from .guardrails import Guardrail, NullGuardrail
 from .llm import LLMResponse
 from .memory import InMemoryStore, Memory
@@ -59,6 +67,13 @@ class Agent:
             False, leaving library callers free to own the system message.
         max_concurrent_tools: cap on read-only tool calls run in parallel within
             a single turn (mutating calls always run serially regardless).
+        policy: permission policy consulted before each tool dispatch (default:
+            allow all).
+        context_window: model context window in tokens; 0 disables compaction.
+            When set, the loop keeps history under ``compact_ratio`` of the window
+            by clearing old tool bodies and summarizing old turns (a recent tail is
+            kept verbatim), and recovers from a real overflow by compacting + retry.
+        compact_ratio: fraction of the window at which compaction kicks in.
     """
 
     def __init__(
@@ -73,6 +88,8 @@ class Agent:
         enforce_system_prompt: bool = False,
         max_concurrent_tools: int = 8,
         policy: Policy | None = None,
+        context_window: int = 0,
+        compact_ratio: float = 0.8,
     ) -> None:
         self.llm = llm
         self.tools = tools or ToolRegistry()
@@ -85,6 +102,11 @@ class Agent:
         self.max_concurrent_tools = max(1, max_concurrent_tools)
         # Permission policy consulted before every tool dispatch (default: allow all).
         self.policy = policy or NullPolicy()
+        # Context compaction: 0 disables. Compact when the estimate crosses
+        # ``compact_ratio`` of the window; keep ~30% as a verbatim recent tail.
+        self.context_window = context_window
+        self._compact_threshold = int(context_window * compact_ratio)
+        self._keep_recent_tokens = max(256, int(context_window * 0.3))
 
     async def _blocked_input(self, text: str, run_id: str) -> ChatResult | None:
         """Screen one user input; return a refusal result if the guardrail blocks."""
@@ -139,10 +161,10 @@ class Agent:
                 return blocked.text or ""
             self.memory.append({"role": "user", "content": user_input})
             messages = self._messages()
-            base = len(messages)
-            result = await self._run_loop(messages, run_id)
-            # Persist only the turns the loop appended (system prompt is not stored).
-            for msg in messages[base:]:
+            result, new_turns = await self._run_loop(messages, run_id)
+            # Persist only the turns the loop appended (system prompt is not
+            # stored, and any compaction summary is ephemeral to the LLM view).
+            for msg in new_turns:
                 self.memory.append(msg)
             return (await self._screen_output(result, run_id)).text or ""
         finally:
@@ -174,9 +196,8 @@ class Agent:
                     memory.append(msg)
             history = memory.load()
             messages = self._with_system_prompt(history)
-            base = len(messages)
-            result = await self._run_loop(messages, run_id)
-            for msg in messages[base:]:
+            result, new_turns = await self._run_loop(messages, run_id)
+            for msg in new_turns:
                 memory.append(msg)
             return await self._screen_output(result, run_id)
         finally:
@@ -199,7 +220,7 @@ class Agent:
             if blocked is not None:
                 return blocked
             working = self._with_system_prompt(list(messages))
-            result = await self._run_loop(working, run_id)
+            result, _new_turns = await self._run_loop(working, run_id)
             return await self._screen_output(result, run_id)
         finally:
             self.hooks.emit("run_end", run_id=run_id)
@@ -221,30 +242,49 @@ class Agent:
             return [{"role": "system", "content": self.system_prompt}, *messages]
         return messages
 
-    async def _run_loop(self, messages: list[dict], run_id: str) -> ChatResult:
-        """Drive the tool-use loop over ``messages``, mutating it in place.
+    async def _run_loop(self, messages: list[dict], run_id: str) -> tuple[ChatResult, list[dict]]:
+        """Drive the tool-use loop over ``messages`` until a final answer.
 
-        Appends each assistant tool-call turn and the tool results to
-        ``messages`` and repeats until the model returns a final text answer or
-        ``max_iterations`` is hit. Returns the final text plus the reasoning and
-        usage from the terminating response. ``run_id`` tags every emitted event.
+        Returns ``(result, new_turns)`` — ``new_turns`` are the assistant/tool
+        turns the loop appended (for the caller to persist). They are tracked
+        separately from ``messages`` so context compaction can freely replace the
+        LLM-facing list without disturbing what gets stored. ``run_id`` tags events.
         """
         last_usage: dict = {}
         model = getattr(self.llm, "model", "?")
+        new_turns: list[dict] = []
+        reactive_compacted = False
+
+        def record(turn: dict) -> None:
+            messages.append(turn)
+            new_turns.append(turn)
+
         for _ in range(self.max_iterations):
+            messages = await self._maybe_compact(messages, run_id)
             specs = self.tools.specs()
             self.hooks.emit("llm_start", run_id=run_id, model=model)
-            response = await self.llm.complete(messages, tools=specs or None)
+            try:
+                response = await self.llm.complete(messages, tools=specs or None)
+            except Exception as exc:
+                # Reactive compaction: estimation can be wrong across backends, so
+                # on a real context-overflow, compact hard and retry once.
+                if self.context_window > 0 and not reactive_compacted and is_context_overflow(exc):
+                    reactive_compacted = True
+                    messages = await self._maybe_compact(messages, run_id, force=True)
+                    response = await self.llm.complete(messages, tools=specs or None)
+                else:
+                    raise
             self.hooks.emit("llm_end", run_id=run_id, model=model, usage=response.usage)
             last_usage = response.usage
 
             if not response.tool_calls:
                 text = response.text or ""
-                messages.append({"role": "assistant", "content": text})
-                return ChatResult(text=text, reasoning=response.reasoning, usage=last_usage)
+                record({"role": "assistant", "content": text})
+                final = ChatResult(text=text, reasoning=response.reasoning, usage=last_usage)
+                return final, new_turns
 
             # Record the assistant's tool-call turn, then execute concurrently.
-            messages.append(
+            record(
                 {
                     "role": "assistant",
                     "content": response.text,
@@ -260,14 +300,64 @@ class Agent:
             )
             results = await self._execute_tool_calls(response.tool_calls, run_id)
             for tc, result in zip(response.tool_calls, results, strict=True):
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result}
-                )
+                record({"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result})
 
         message = f"Stopped: reached max_iterations ({self.max_iterations})."
         self.hooks.emit("max_iterations", run_id=run_id, limit=self.max_iterations)
-        messages.append({"role": "assistant", "content": message})
-        return ChatResult(text=message, reasoning=None, usage=last_usage)
+        record({"role": "assistant", "content": message})
+        return ChatResult(text=message, reasoning=None, usage=last_usage), new_turns
+
+    async def _maybe_compact(
+        self, messages: list[dict], run_id: str, *, force: bool = False
+    ) -> list[dict]:
+        """Compact ``messages`` if over budget: microcompact first, then summarize.
+
+        Returns a (possibly new) list under the token threshold. With ``force`` it
+        compacts regardless of the estimate (the reactive-overflow path).
+        """
+        if self.context_window <= 0:
+            return messages
+        if not force and estimate_tokens(messages) <= self._compact_threshold:
+            return messages
+
+        before = estimate_tokens(messages)
+        # Cheap tier: clear old tool-result bodies.
+        compacted = microcompact(messages)
+        if not force and estimate_tokens(compacted) <= self._compact_threshold:
+            self.hooks.emit(
+                "compaction",
+                run_id=run_id,
+                kind="microcompact",
+                before=before,
+                after=estimate_tokens(compacted),
+            )
+            return compacted
+
+        # Full tier: summarize the prefix, keep an invariant-safe recent tail.
+        idx = safe_split_index(compacted, self._keep_recent_tokens)
+        floor = 1 if compacted and compacted[0].get("role") == "system" else 0
+        if idx <= floor:
+            return compacted  # nothing safe to summarize; best-effort microcompact
+        try:
+            summary = await self._summarize(compacted[:idx])
+        except Exception:  # summarization failed — drop the prefix rather than crash
+            summary = "(earlier turns dropped: summary unavailable)"
+        result = build_compacted(compacted, summary, idx)
+        self.hooks.emit(
+            "compaction",
+            run_id=run_id,
+            kind="summarize",
+            before=before,
+            after=estimate_tokens(result),
+        )
+        return result
+
+    async def _summarize(self, prefix: list[dict]) -> str:
+        """Summarize ``prefix`` into a compact digest via a tool-free LLM call."""
+        resp = await self.llm.complete(
+            [*prefix, {"role": "user", "content": COMPACT_PROMPT}], tools=None
+        )
+        return resp.text or "(summary unavailable)"
 
     async def _execute_tool_calls(self, tool_calls: list, run_id: str) -> list[str]:
         """Run a turn's tool calls, parallelizing only consecutive safe runs.

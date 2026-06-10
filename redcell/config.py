@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     temperature: float = 0.7
     max_tokens: int = 1024
     max_iterations: int = 25
+    # Context window of the model in tokens. 0 disables auto-compaction; set it to
+    # your model's window (e.g. 8192 for a small local model) to keep long runs
+    # from overflowing — the agent summarizes old turns and keeps a recent tail.
+    context_window: int = 0
+    compact_ratio: float = 0.8
     # Transient-error retry for LLM calls (429/5xx/connection). 0 disables.
     llm_max_retries: int = 5
     llm_retry_base_delay: float = 0.5
