@@ -3,6 +3,7 @@ name = "redcell"
 version = "0.1.0"
 description = "A local-first security testing agent — an observable target for AI-security tooling."
 authors = [{ name = "Streamline AI LLC (dba TravisML.ai)" }]
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
     "litellm>=1.40",

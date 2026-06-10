@@ -160,7 +160,11 @@ uv run ruff format .     # format
 
 ## License
 
-MIT © Streamline AI LLC (dba TravisML.ai)
+[Prosperity Public License 3.0.0](LICENSE) © Streamline AI LLC (dba TravisML.ai)
+
+Free for noncommercial use. Commercial use is allowed for a thirty-day trial;
+beyond that, contact the contributor for a commercial license. This is a
+source-available license, not an OSI open-source license.
 
 [LiteLLM]: https://docs.litellm.ai/
 [AgentGateway]: https://agentgateway.dev/
