@@ -123,13 +123,24 @@ To recreate the original vulnerable target end-to-end:
 
 `serve` launches a local [AgentGateway] process (`agentgateway -f
 agentgateway/config.yaml`) and connects the agent to its aggregated MCP
-endpoint. The starter config wires **Playwright**, **Filesystem** (scoped to
-`agentgateway/sandbox/`), and **Fetch** behind `:3030` (UI on `:15000`).
+endpoint. The starter config wires **Playwright** (browser), **Fetch** (HTTP),
+and **RAG** (Qdrant) — which run locally — plus **Filesystem** and **Shell**,
+which run on a separate **Debian VM over SSH** (see prerequisites). All sit
+behind `:3030` (gateway UI on `:15000`).
 
-Prerequisites: `agentgateway` on your PATH, plus `npx` (Node) and `uvx`. If the
-gateway can't start, `serve` runs with builtin tools only. Every MCP tool call
-routes through the gateway — the choke point that makes redcell a useful test
-subject.
+**Prerequisites:**
+
+- `agentgateway` on your `PATH`, plus `npx` (Node) and `uvx` for the local stdio
+  backends. If the gateway can't start, `serve` runs with builtin tools only.
+- **For `shell` and `filesystem`: a code-execution VM.** These tools are wired as
+  `ssh debian-agent …`, so `run_command`/`run_script` and file operations execute on
+  a dedicated **Debian VM**, never on your host. A fresh checkout has no `debian-agent`
+  SSH host configured, so until you set one up these two tools simply **error** (the
+  rest still work) — they do **not** fall back to running on your machine. Setup:
+  [Setting up the execution VM](docs/tools-and-gateway.md#setting-up-the-execution-vm).
+
+Every MCP tool call routes through the gateway — the choke point that makes
+redcell a useful test subject.
 
 ## RAG knowledge base (Qdrant)
 

@@ -83,6 +83,59 @@ browser-based scanners can connect.
 You own `agentgateway/config.yaml` — add targets, policies, auth, and observability
 there for the tools you want to exercise.
 
+### Setting up the execution VM
+
+`filesystem` and `shell` are wired as `ssh -o BatchMode=yes debian-agent <mcp-binary>`,
+so they need a Debian VM reachable over **key-based** SSH under the host alias
+`debian-agent`. A fresh checkout has no such host, so those two tools error until you
+set this up — everything else (Playwright, Fetch, RAG, builtins) still works, and the
+agent never falls back to running commands on your host. One-time setup:
+
+1. **Create the VM.** A minimal Debian install in any hypervisor (VirtualBox, UTM,
+   multipass, …). Harden it: host-only or NAT networking, a non-root user, and a clean
+   snapshot to revert to between runs.
+
+2. **Create the `redcell` user and sandbox** (the config paths live under
+   `/home/redcell`). On the VM:
+   ```bash
+   sudo adduser redcell
+   sudo -u redcell mkdir -p /home/redcell/sandbox
+   ```
+
+3. **Install the MCP server binaries globally on the VM.** They are pre-installed so
+   the gateway runs them directly (air-gapped at runtime — no `npx` network fetch). As
+   the `redcell` user:
+   ```bash
+   npm config set prefix ~/.npm-global
+   npm install -g mcp-server-commands @modelcontextprotocol/server-filesystem
+   # -> ~/.npm-global/bin/mcp-server-commands and .../mcp-server-filesystem
+   ```
+   These absolute paths are what `agentgateway/config.yaml` invokes.
+
+4. **Enable key-based SSH from your host** (`BatchMode=yes` means no password prompt,
+   so password auth won't work):
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/redcell_vm        # on the host, if you need a key
+   ssh-copy-id -i ~/.ssh/redcell_vm.pub redcell@<vm-ip>
+   ```
+
+5. **Add the `debian-agent` alias** to your host `~/.ssh/config`:
+   ```
+   Host debian-agent
+       HostName <vm-ip>
+       User redcell
+       IdentityFile ~/.ssh/redcell_vm
+       BatchMode yes
+   ```
+
+6. **Verify** (should print with no password prompt):
+   ```bash
+   ssh debian-agent 'echo ok && ls ~/.npm-global/bin'
+   ```
+
+If your VM uses a different user, path, or alias, edit the `filesystem`/`shell` targets
+in `agentgateway/config.yaml` to match.
+
 ### Disabling dangerous tools
 
 Drop tools before the agent can call them with `AGENT_MCP_TOOL_DENYLIST` (comma-
