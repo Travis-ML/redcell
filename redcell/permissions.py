@@ -28,8 +28,10 @@ from typing import Literal, Protocol, runtime_checkable
 
 Behavior = Literal["allow", "deny", "ask"]
 
-# (tool_name, rule_content, arguments) -> whether the content rule matches.
-ContentMatcher = Callable[[str, str, dict], bool]
+# (tool_name, rule, arguments) -> whether the content rule matches the call. The
+# whole rule is passed (not just content) so a matcher can vary by behavior — e.g.
+# an allow rule must not match a compound shell command, while a deny rule does.
+ContentMatcher = Callable[[str, "Rule", dict], bool]
 
 
 @dataclass(frozen=True)
@@ -93,9 +95,9 @@ def format_rule(rule: Rule) -> str:
     return f"{rule.tool_name}({escaped})"
 
 
-def default_content_match(tool_name: str, content: str, arguments: dict) -> bool:
+def default_content_match(tool_name: str, rule: Rule, arguments: dict) -> bool:
     """Generic content match: the rule content appears in any argument value."""
-    needle = content.lower()
+    needle = (rule.content or "").lower()
     return any(needle in str(v).lower() for v in arguments.values())
 
 
@@ -128,7 +130,7 @@ class PolicyEngine:
             return False
         if rule.content is None:
             return True
-        return self.content_matcher(tool_name, rule.content, arguments)
+        return self.content_matcher(tool_name, rule, arguments)
 
     def evaluate(self, tool_name: str, arguments: dict) -> Decision:
         matched = [r for r in self.rules if self._matches(r, tool_name, arguments)]

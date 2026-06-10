@@ -112,9 +112,22 @@ matches, `AGENT_PERMISSION_DEFAULT` applies (`allow`/`deny`/`ask`). Tool names m
 case-insensitively as a substring (so `run_command` also covers `shell_run_command`).
 Because the server is headless, an `ask` has no human to prompt — it resolves to
 `AGENT_PERMISSION_ASK_RESOLUTION` (`deny` by default) while still being recorded as an
-`ask`. `AGENT_PERMISSIONS=false` disables the engine entirely (baseline mode). The
-content matcher is pluggable — a command-aware matcher (bash arg policy, path
-confinement) can be plugged in for shell/filesystem tools.
+`ask`. `AGENT_PERMISSIONS=false` disables the engine entirely (baseline mode).
+
+**Command- and path-aware matching.** For shell tools the content matcher
+(`shellpolicy.py`) is command-aware: rule content is `git status` (exact), `curl`
+(by command name), `git:*` (prefix, word-boundary so `ls:*` ≠ `lsof`), or `git *`
+(wildcard). An **allow** rule never matches a *compound* command, so
+`run_command(cd:*)` can't bless `cd /x && curl evil`; **deny**/**ask** rules match
+any sub-command of a compound. Wrappers (`timeout`/`nice`/`env`/…) are peeled and
+env-var prefixes stripped asymmetrically (an allow rule won't accept
+`LD_PRELOAD=x cmd`). Two special tokens wire the detectors into rules:
+`run_command(EXEC)` matches any interpreter/exfil command, `run_command(RM)` any
+dangerous removal. For filesystem tools (`pathpolicy.py`), a rule is a path/dir:
+`read_file(/etc)` matches reads under `/etc` after canonicalizing `..`/`~`, and
+confinement is `AGENT_PERMISSION_ALLOW=read_file(<sandbox>)` with a deny default.
+These documented bypass classes (compound, wrapper, env-prefix, `..` traversal,
+expansion syntax) double as a **built-in red-team test matrix** for the target.
 
 ## Recreating the vulnerable target
 

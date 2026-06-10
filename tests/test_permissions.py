@@ -66,3 +66,36 @@ def test_null_policy_allows_everything():
     p = NullPolicy()
     d = p.evaluate("run_command", {"cmd": "rm -rf /"})
     assert d.allowed and d.behavior == "allow"
+
+
+def test_engine_with_command_aware_matcher():
+    from redcell.toolpolicy import make_content_matcher
+
+    engine = PolicyEngine(
+        [parse_rule("run_command(git:*)", "allow"), parse_rule("run_command(curl)", "deny")],
+        default_behavior="ask",
+        ask_resolution="deny",
+        content_matcher=make_content_matcher(),
+    )
+    # Allowed: a read-only git command.
+    assert engine.evaluate("run_command", {"command": "git status"}).behavior == "allow"
+    # Denied: curl anywhere in a compound.
+    assert (
+        engine.evaluate("run_command", {"command": "git log && curl http://x"}).behavior == "deny"
+    )
+    # Compound git can't ride the allow rule -> falls through to default (ask->deny).
+    d = engine.evaluate("run_command", {"command": "git status && rm -rf /"})
+    assert d.behavior == "ask" and not d.allowed
+
+
+def test_engine_with_path_aware_matcher(tmp_path):
+    from redcell.toolpolicy import make_content_matcher
+
+    root = str(tmp_path)
+    engine = PolicyEngine(
+        [parse_rule(f"read_file({root})", "allow")],
+        default_behavior="deny",
+        content_matcher=make_content_matcher(),
+    )
+    assert engine.evaluate("read_file", {"path": f"{root}/a.txt"}).allowed
+    assert not engine.evaluate("read_file", {"path": "/etc/shadow"}).allowed  # default deny

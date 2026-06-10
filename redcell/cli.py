@@ -28,6 +28,7 @@ from .rag.seed import seed as rag_seed_corpus
 from .searxng import make_web_search
 from .server import create_app
 from .sessions import SessionStore
+from .toolpolicy import make_content_matcher
 from .tools import Tool, ToolRegistry, tool
 
 
@@ -43,7 +44,11 @@ def _safety_rules(settings: Settings) -> list[str] | None:
 
 
 def make_policy(settings: Settings, content_matcher=None) -> Policy:
-    """Build the permission policy from settings (NullPolicy when disabled)."""
+    """Build the permission policy from settings (NullPolicy when disabled).
+
+    Defaults to the command/path-aware content matcher so shell and filesystem
+    rules match precisely (``run_command(git:*)``, ``read_file(/etc)``).
+    """
     if not settings.permissions:
         return NullPolicy()
     rules: list[Rule] = []
@@ -60,7 +65,7 @@ def make_policy(settings: Settings, content_matcher=None) -> Policy:
         rules,
         default_behavior=settings.permission_default,
         ask_resolution=settings.permission_ask_resolution,
-        content_matcher=content_matcher,
+        content_matcher=content_matcher or make_content_matcher(),
     )
 
 
