@@ -129,17 +129,20 @@ class Agent:
     async def run(self, user_input: str, *, correlation_id: str | None = None) -> str:
         """Process one user input against the agent's memory, returning text."""
         run_id = correlation_id or _new_run_id()
-        blocked = await self._blocked_input(user_input, run_id)
-        if blocked is not None:
-            return blocked.text or ""
-        self.memory.append({"role": "user", "content": user_input})
-        messages = self._messages()
-        base = len(messages)
-        result = await self._run_loop(messages, run_id)
-        # Persist only the turns the loop appended (system prompt is not stored).
-        for msg in messages[base:]:
-            self.memory.append(msg)
-        return (await self._screen_output(result, run_id)).text or ""
+        try:
+            blocked = await self._blocked_input(user_input, run_id)
+            if blocked is not None:
+                return blocked.text or ""
+            self.memory.append({"role": "user", "content": user_input})
+            messages = self._messages()
+            base = len(messages)
+            result = await self._run_loop(messages, run_id)
+            # Persist only the turns the loop appended (system prompt is not stored).
+            for msg in messages[base:]:
+                self.memory.append(msg)
+            return (await self._screen_output(result, run_id)).text or ""
+        finally:
+            self.hooks.emit("run_end", run_id=run_id)
 
     async def run_session(
         self, memory: Memory, incoming: list[dict], *, correlation_id: str | None = None
@@ -156,21 +159,24 @@ class Agent:
         turn's events can be attributed even when many sessions interleave.
         """
         run_id = correlation_id or _new_run_id()
-        blocked = await self._blocked_input(self._latest_user_text(incoming), run_id)
-        if blocked is not None:
-            return blocked
-        # System messages are never conversation turns; drop any the client sent
-        # so they can't be persisted and later suppress the system prompt.
-        for msg in incoming:
-            if msg.get("role") != "system":
+        try:
+            blocked = await self._blocked_input(self._latest_user_text(incoming), run_id)
+            if blocked is not None:
+                return blocked
+            # System messages are never conversation turns; drop any the client
+            # sent so they can't be persisted and later suppress the system prompt.
+            for msg in incoming:
+                if msg.get("role") != "system":
+                    memory.append(msg)
+            history = memory.load()
+            messages = self._with_system_prompt(history)
+            base = len(messages)
+            result = await self._run_loop(messages, run_id)
+            for msg in messages[base:]:
                 memory.append(msg)
-        history = memory.load()
-        messages = self._with_system_prompt(history)
-        base = len(messages)
-        result = await self._run_loop(messages, run_id)
-        for msg in messages[base:]:
-            memory.append(msg)
-        return await self._screen_output(result, run_id)
+            return await self._screen_output(result, run_id)
+        finally:
+            self.hooks.emit("run_end", run_id=run_id)
 
     async def run_messages(
         self, messages: list[dict], *, correlation_id: str | None = None
@@ -184,12 +190,15 @@ class Agent:
         ``correlation_id`` tags every emitted event for this turn.
         """
         run_id = correlation_id or _new_run_id()
-        blocked = await self._blocked_input(self._latest_user_text(messages), run_id)
-        if blocked is not None:
-            return blocked
-        working = self._with_system_prompt(list(messages))
-        result = await self._run_loop(working, run_id)
-        return await self._screen_output(result, run_id)
+        try:
+            blocked = await self._blocked_input(self._latest_user_text(messages), run_id)
+            if blocked is not None:
+                return blocked
+            working = self._with_system_prompt(list(messages))
+            result = await self._run_loop(working, run_id)
+            return await self._screen_output(result, run_id)
+        finally:
+            self.hooks.emit("run_end", run_id=run_id)
 
     def _with_system_prompt(self, messages: list[dict]) -> list[dict]:
         """Prepend ``system_prompt`` to ``messages`` per the enforcement policy.
@@ -217,11 +226,12 @@ class Agent:
         usage from the terminating response. ``run_id`` tags every emitted event.
         """
         last_usage: dict = {}
+        model = getattr(self.llm, "model", "?")
         for _ in range(self.max_iterations):
             specs = self.tools.specs()
-            self.hooks.emit("llm_start", run_id=run_id, model=getattr(self.llm, "model", "?"))
+            self.hooks.emit("llm_start", run_id=run_id, model=model)
             response = await self.llm.complete(messages, tools=specs or None)
-            self.hooks.emit("llm_end", run_id=run_id, usage=response.usage)
+            self.hooks.emit("llm_end", run_id=run_id, model=model, usage=response.usage)
             last_usage = response.usage
 
             if not response.tool_calls:

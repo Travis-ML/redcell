@@ -11,6 +11,7 @@ import typer
 import uvicorn
 
 from . import __version__
+from .accounting import CostAccountant
 from .agent import Agent
 from .config import Settings
 from .gateway import GatewaySupervisor
@@ -155,6 +156,13 @@ def serve(
     readonly_terms = _mcp_readonly_terms(settings)
     denylist_reported: list[bool] = []  # one-shot guard for the startup summary
 
+    # One shared Hooks instance across all per-request agents so the scorecard
+    # accountant aggregates the whole scan (per-request agents would each get a
+    # fresh, isolated Hooks otherwise).
+    hooks = logging_hooks()
+    if settings.scorecard:
+        CostAccountant().attach(hooks)
+
     def build_agent() -> Agent:
         tools = default_tools(settings)  # builtins registered first — they win collisions
         gateway_tools = manager.tools()  # gateway-provided MCP tools (empty if offline)
@@ -210,7 +218,7 @@ def serve(
             system_prompt=build_system_prompt(
                 safety=settings.safety_prompt, rules=_safety_rules(settings)
             ),
-            hooks=logging_hooks(),
+            hooks=hooks,
             max_iterations=settings.max_iterations,
             guardrail=make_guardrail(settings.guardrails),
             # When safety is on, the policy must not be suppressible by a client

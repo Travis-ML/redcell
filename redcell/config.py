@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # (SSE ClosedResourceError + "Session termination failed: 202"). Set false to
     # keep them when debugging the transport itself.
     log_quiet_mcp_transport: bool = True
+    # Emit a per-run `scorecard` event (tokens, USD cost, llm/tool/guardrail
+    # counts) at the end of each request — turns the event stream into a scan
+    # cost/activity report. Pricing lives in redcell/pricing.py.
+    scorecard: bool = True
 
     # `redcell serve` — the OpenAI-compatible HTTP server.
     server_host: str = "0.0.0.0"

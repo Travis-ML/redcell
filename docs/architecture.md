@@ -41,6 +41,9 @@ touching the agent loop.
   success — e.g. a RAG canary surfacing in a tool's output — visible in the event
   stream itself. Set `AGENT_LOG_JSON=true` (+ `AGENT_LOG_FILE`) for a JSONL event
   sink per scan. Every MCP tool call also routes through the gateway choke point.
+  A `CostAccountant` (`accounting.py`) subscribes to these events and emits a
+  per-run `scorecard` (tokens, USD cost via `pricing.py`, llm/tool/guardrail
+  counts) at each `run_end`, turning a scan's event stream into a cost report.
 - **Secure-by-default, toggleable.** Safety prompt and guardrail are on; each
   vulnerable surface is a single config switch (see [security.md](security.md)).
 

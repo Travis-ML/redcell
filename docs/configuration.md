@@ -32,6 +32,7 @@ The env var for any field is `AGENT_` + the field name upper-cased
 | `AGENT_LOG_JSON` | bool | `false` | Render structured events as JSON instead of the console format. |
 | `AGENT_LOG_FILE` | str? | _(unset)_ | Write events to this file (append) instead of stderr. With `AGENT_LOG_JSON=true` this is a JSONL event sink per scan. |
 | `AGENT_LOG_QUIET_MCP_TRANSPORT` | bool | `true` | Silence the MCP streamable-HTTP transport's benign teardown-race logs (SSE `ClosedResourceError`, `Session termination failed: 202`). Set `false` to keep them when debugging the transport. |
+| `AGENT_SCORECARD` | bool | `true` | Emit a per-run `scorecard` event (tokens, USD cost, llm/tool/guardrail counts, per-model breakdown) at each request's end. Pricing table is `redcell/pricing.py`; local/unknown models count tokens at $0. |
 
 ### `AGENT_MODEL` examples
 
