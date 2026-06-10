@@ -59,18 +59,29 @@ touching the agent loop.
 
 ```
 prepend system prompt ─▶ ┌─────────────────────────────────────────────┐
-                         │ call LLM(messages, tool specs)              │ ◀── repeats up to
+                         │ call LLM(messages, tool specs)  [retried]   │ ◀── repeats up to
                          │   ├ no tool calls ─▶ final text ─▶ return    │     max_iterations
                          │   └ tool calls:                              │
                          │       append assistant turn                 │
-                         │       run all tools concurrently (gather)   │
+                         │       run tools (read-only parallel,        │
+                         │         mutating serial) → results          │
                          │       append each tool result               │
                          └─────────────────────────────────────────────┘
 ```
 
-- Tool calls in a round execute **concurrently** (`asyncio.gather`).
-- Tool errors (unknown tool, raised exception, MCP failure) come back as
-  `"Error: …"` strings the model can read and recover from — they are never raised.
+- **LLM calls retry** transient errors (429/5xx/connection) with exponential
+  backoff + jitter, honoring `Retry-After`; 4xx/auth/validation errors fail fast
+  (`AGENT_LLM_MAX_RETRIES`, default `5`).
+- **Tool execution is partitioned**: consecutive concurrency-safe (read-only)
+  calls run in parallel under a bounded pool; a mutating call runs alone as a
+  barrier, so a same-turn write+read (or two writes) can't race. Result order
+  always matches call order. Tools declare `read_only`/`concurrency_safe` (bool or
+  per-argument predicate); the defaults are fail-closed (assume mutating/serial),
+  and MCP tools keep those conservative defaults.
+- Tool results are returned as a `ToolResult(content, is_error)`. Failures (unknown
+  tool, raised exception) are flagged `is_error` and wrapped in `<tool_use_error>…</tool_use_error>`
+  so the model reliably recognizes them; all results are head/tail truncated to
+  bound the context window.
 - The loop is bounded by `max_iterations` (Agent default `10`; the CLI/server pass
   `AGENT_MAX_ITERATIONS`, default `25`). Hitting the cap returns a "Stopped: reached
   max_iterations" message rather than looping forever.

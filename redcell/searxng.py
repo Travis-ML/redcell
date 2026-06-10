@@ -70,4 +70,5 @@ def make_web_search(
         async with httpx.AsyncClient() as http:
             return await _query(http, query, max_results)
 
-    return tool(web_search)
+    # A search is read-only and safe to run alongside other read-only tools.
+    return tool(web_search, read_only=True, concurrency_safe=True)

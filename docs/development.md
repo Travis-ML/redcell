@@ -92,7 +92,10 @@ print(await agent.run("What is 21 + 21?"))
 Decorate a function with `@tool` and register it (e.g. extend `default_tools` in
 `cli.py`). Type hints generate the schema; the docstring is the description. Return a
 string, or any JSON-serializable value (it is `json.dumps`-ed). Raised exceptions are
-caught and returned to the model as `"Error: …"`.
+caught and surfaced to the model as an `is_error` `ToolResult` wrapped in
+`<tool_use_error>…</tool_use_error>`. Declare effects for safe parallelism, e.g.
+`@tool(read_only=True, concurrency_safe=True)` (both accept a bool or a per-argument
+predicate); the defaults are fail-closed (assumed mutating, run serially).
 
 ### Custom guardrail
 

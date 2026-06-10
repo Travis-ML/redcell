@@ -33,17 +33,21 @@ def test_schema_generated_from_signature():
 
 async def test_registry_invokes_sync_and_async_tools():
     reg = ToolRegistry([add, shout])
-    assert await reg.invoke("add", {"a": 2, "b": 3}) == "5"
-    assert await reg.invoke("shout", {"text": "hi"}) == "HI"
+    r1 = await reg.invoke("add", {"a": 2, "b": 3})
+    assert r1.content == "5" and not r1.is_error
+    r2 = await reg.invoke("shout", {"text": "hi"})
+    assert r2.content == "HI" and not r2.is_error
 
 
-async def test_invoke_unknown_tool_returns_error_string():
+async def test_invoke_unknown_tool_returns_error_result():
     reg = ToolRegistry([add])
     result = await reg.invoke("nope", {})
-    assert "error" in result.lower()
+    assert result.is_error
+    assert "nope" in result.content
+    assert result.content.startswith("<tool_use_error>")
 
 
-async def test_tool_exception_is_caught_and_returned():
+async def test_tool_exception_is_caught_and_flagged():
     @tool
     def boom() -> str:
         """Always fails."""
@@ -51,13 +55,83 @@ async def test_tool_exception_is_caught_and_returned():
 
     reg = ToolRegistry([boom])
     result = await reg.invoke("boom", {})
-    assert "kaboom" in result
+    assert result.is_error
+    assert "kaboom" in result.content
+    assert "<tool_use_error>" in result.content
+
+
+async def test_large_result_is_truncated():
+    from redcell.tools import _MAX_TOOL_RESULT_CHARS
+
+    @tool
+    def big() -> str:
+        """Returns a huge string."""
+        return "x" * (_MAX_TOOL_RESULT_CHARS + 5000)
+
+    result = await ToolRegistry([big]).invoke("big", {})
+    assert not result.is_error
+    assert len(result.content) <= _MAX_TOOL_RESULT_CHARS + 64  # + truncation marker
+    assert "chars truncated" in result.content
+
+
+def test_classification_defaults_are_fail_closed():
+    # An unannotated tool is assumed mutating, not concurrency-safe, destructive.
+    @tool
+    def bare() -> str:
+        """No classification."""
+        return "x"
+
+    assert bare.is_read_only({}) is False  # assumed mutating
+    assert bare.is_concurrency_safe({}) is False  # assumed serial-only
+    assert bare.is_destructive({}) is False  # not declared destructive
+    assert bare.source == "builtin"
+
+
+def test_classification_flags_and_predicates():
+    @tool(read_only=True, concurrency_safe=True)
+    def ro() -> str:
+        """Read only."""
+        return "x"
+
+    assert ro.is_read_only({}) and ro.is_concurrency_safe({})
+
+    # Predicate form: read-only only when arg 'mode' == 'read'.
+    def ro_pred(args):
+        return args.get("mode") == "read"
+
+    t = Tool(lambda **k: "x", name="cond", read_only=ro_pred)
+    assert t.is_read_only({"mode": "read"})
+    assert not t.is_read_only({"mode": "write"})
+
+
+def test_classifier_that_raises_fails_closed():
+    def boom(_args):
+        raise RuntimeError("nope")
+
+    t = Tool(lambda **k: "x", name="c", read_only=boom, concurrency_safe=boom, destructive=boom)
+    assert t.is_read_only({}) is False  # error -> not read-only
+    assert t.is_concurrency_safe({}) is False  # error -> not parallel-safe
+    assert t.is_destructive({}) is True  # error -> assume destructive
 
 
 def test_specs_returns_all_tools():
     reg = ToolRegistry([add, shout])
     names = {s["function"]["name"] for s in reg.specs()}
     assert names == {"add", "shout"}
+
+
+async def test_register_no_overwrite_shadows_collision():
+    builtin = Tool(lambda **k: "builtin", name="dup", source="builtin")
+    mcp = Tool(lambda **k: "mcp", name="dup", source="mcp")
+    reg = ToolRegistry([builtin])
+    # overwrite=False refuses the collision: the builtin survives.
+    added = reg.register(mcp, overwrite=False)
+    assert added is False
+    assert reg.names() == {"dup"}
+    assert (await reg.invoke("dup", {})).content == "builtin"
+    # default overwrite=True still replaces (unchanged behavior).
+    assert reg.register(mcp) is True
+    assert (await reg.invoke("dup", {})).content == "mcp"
 
 
 def test_tool_derives_name_and_description_from_function():
@@ -104,4 +178,4 @@ async def test_registry_invoke_uses_overridden_name():
 
     t = Tool(fn, schema={"type": "object", "properties": {}, "required": []}, name="ping")
     reg = ToolRegistry([t])
-    assert await reg.invoke("ping", {}) == "pong"
+    assert (await reg.invoke("ping", {})).content == "pong"

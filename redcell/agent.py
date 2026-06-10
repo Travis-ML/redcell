@@ -56,6 +56,8 @@ class Agent:
             it by sending its own ``system`` role. ``serve`` sets this whenever the
             safety prompt is on, closing the stateless-path bypass. Defaults to
             False, leaving library callers free to own the system message.
+        max_concurrent_tools: cap on read-only tool calls run in parallel within
+            a single turn (mutating calls always run serially regardless).
     """
 
     def __init__(
@@ -68,6 +70,7 @@ class Agent:
         max_iterations: int = 10,
         guardrail: Guardrail | None = None,
         enforce_system_prompt: bool = False,
+        max_concurrent_tools: int = 8,
     ) -> None:
         self.llm = llm
         self.tools = tools or ToolRegistry()
@@ -77,6 +80,7 @@ class Agent:
         self.max_iterations = max_iterations
         self.guardrail = guardrail or NullGuardrail()
         self.enforce_system_prompt = enforce_system_prompt
+        self.max_concurrent_tools = max(1, max_concurrent_tools)
 
     async def _blocked_input(self, text: str, run_id: str) -> ChatResult | None:
         """Screen one user input; return a refusal result if the guardrail blocks."""
@@ -240,12 +244,7 @@ class Agent:
                     ],
                 }
             )
-            results = await asyncio.gather(
-                *(
-                    self._run_tool(tc.name, tc.arguments, tc.id, run_id)
-                    for tc in response.tool_calls
-                )
-            )
+            results = await self._execute_tool_calls(response.tool_calls, run_id)
             for tc, result in zip(response.tool_calls, results, strict=True):
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "name": tc.name, "content": result}
@@ -256,12 +255,45 @@ class Agent:
         messages.append({"role": "assistant", "content": message})
         return ChatResult(text=message, reasoning=None, usage=last_usage)
 
+    async def _execute_tool_calls(self, tool_calls: list, run_id: str) -> list[str]:
+        """Run a turn's tool calls, parallelizing only consecutive safe runs.
+
+        Consecutive concurrency-safe (read-only) calls execute together under a
+        bounded pool; a mutating call runs alone and acts as a barrier. This
+        keeps the parallelism win for read-heavy turns while preventing the
+        flat-``gather`` footgun where a same-turn write and a dependent read (or
+        two writes) race. Order of results matches the order of ``tool_calls``.
+        """
+        results: list[str] = [""] * len(tool_calls)
+        sem = asyncio.Semaphore(self.max_concurrent_tools)
+
+        async def run_one(idx: int) -> None:
+            tc = tool_calls[idx]
+            async with sem:
+                results[idx] = await self._run_tool(tc.name, tc.arguments, tc.id, run_id)
+
+        i, n = 0, len(tool_calls)
+        while i < n:
+            if self.tools.is_concurrency_safe(tool_calls[i].name, tool_calls[i].arguments):
+                j = i
+                while j < n and self.tools.is_concurrency_safe(
+                    tool_calls[j].name, tool_calls[j].arguments
+                ):
+                    j += 1
+                await asyncio.gather(*(run_one(k) for k in range(i, j)))  # parallel run
+                i = j
+            else:
+                await run_one(i)  # mutating call: serial barrier
+                i += 1
+        return results
+
     async def _run_tool(self, name: str, arguments: dict, call_id: str, run_id: str) -> str:
         # Tool args are emitted RAW (not redacted): observing an exfiltration
         # attempt in a tool call is the point — the gateway is the choke point.
         self.hooks.emit("tool_start", run_id=run_id, name=name, args=arguments, id=call_id)
         started = time.perf_counter()
-        result = await self.tools.invoke(name, arguments)
+        outcome = await self.tools.invoke(name, arguments)
+        result = outcome.content
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         # Echo the (truncated) RAW result so injection success — e.g. a RAG canary
         # surfacing in a tool's output — is visible in the event stream itself.
@@ -269,7 +301,13 @@ class Agent:
         if len(result) > _MAX_RESULT_ECHO:
             echo = result[:_MAX_RESULT_ECHO] + "…[truncated]"
         self.hooks.emit(
-            "tool_end", run_id=run_id, name=name, id=call_id, duration_ms=duration_ms, result=echo
+            "tool_end",
+            run_id=run_id,
+            name=name,
+            id=call_id,
+            duration_ms=duration_ms,
+            is_error=outcome.is_error,
+            result=echo,
         )
         # Screen the result before it reaches the model: a fetched secret or PII
         # read off the filesystem is redacted here so the model can't relay it.

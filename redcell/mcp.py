@@ -96,9 +96,13 @@ class MCPManager:
                 return f"Error: {exc}"
 
         call.__name__ = name
+        # MCP tools keep the conservative defaults (not read-only, not
+        # concurrency-safe) — we can't introspect a remote tool's effects, so
+        # they run serially and are treated as mutating until proven otherwise.
         return Tool(
             call,
             schema=remote.inputSchema,  # type: ignore[attr-defined]
             name=name,
             description=remote.description or "",  # type: ignore[attr-defined]
+            source="mcp",
         )

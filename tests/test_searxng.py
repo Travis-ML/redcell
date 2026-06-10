@@ -73,4 +73,5 @@ async def test_web_search_http_error_returns_string_via_registry():
     registry = ToolRegistry([t])
     out = await registry.invoke("web_search", {"query": "x"})
     await client.aclose()
-    assert out.lower().startswith("error")
+    assert out.is_error
+    assert "<tool_use_error>" in out.content

@@ -25,6 +25,9 @@ The env var for any field is `AGENT_` + the field name upper-cased
 | `AGENT_TEMPERATURE` | float | `0.7` | Sampling temperature passed to the model. |
 | `AGENT_MAX_TOKENS` | int | `1024` | Max tokens per completion. |
 | `AGENT_MAX_ITERATIONS` | int | `25` | Hard cap on tool-call rounds per turn. Prevents infinite tool loops. |
+| `AGENT_LLM_MAX_RETRIES` | int | `5` | Retries for transient LLM errors (429/5xx/connection). `0` disables. Honors `Retry-After`; never retries 4xx/auth/validation. |
+| `AGENT_LLM_RETRY_BASE_DELAY` | float | `0.5` | Base seconds for exponential backoff (`min(base·2^(n-1), max)` + ≤25% jitter). |
+| `AGENT_LLM_RETRY_MAX_DELAY` | float | `30.0` | Cap on a single backoff delay (seconds). |
 | `AGENT_LOG_LEVEL` | str | `INFO` | Log level for structlog/stdlib (`DEBUG`/`INFO`/`WARNING`/…). |
 | `AGENT_LOG_JSON` | bool | `false` | Render structured events as JSON instead of the console format. |
 | `AGENT_LOG_FILE` | str? | _(unset)_ | Write events to this file (append) instead of stderr. With `AGENT_LOG_JSON=true` this is a JSONL event sink per scan. |

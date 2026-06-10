@@ -68,13 +68,13 @@ def unmatched_denylist(tool_names: list[str], denied: set[str]) -> list[str]:
 app = typer.Typer(help="redcell command-line interface.")
 
 
-@tool
+@tool(read_only=True, concurrency_safe=True)
 def add(a: float, b: float) -> float:
     """Add two numbers and return the sum."""
     return a + b
 
 
-@tool
+@tool(read_only=True, concurrency_safe=True)
 def utc_now() -> str:
     """Return the current UTC time in ISO 8601 format."""
     return datetime.now(UTC).isoformat()
@@ -114,24 +114,37 @@ def serve(
     denylist_reported: list[bool] = []  # one-shot guard for the startup summary
 
     def build_agent() -> Agent:
-        tools = default_tools(settings)
+        tools = default_tools(settings)  # builtins registered first — they win collisions
         gateway_tools = manager.tools()  # gateway-provided MCP tools (empty if offline)
         kept, dropped = apply_denylist(gateway_tools, denied)
-        for t in kept:
-            tools.register(t)
-        if denied and not denylist_reported:
-            # Log once, after discovery, so a denylist that matched nothing is
-            # loud rather than a silently-enabled "denied" capability.
+        # Builtins shadow same-named MCP tools (overwrite=False) so a gateway
+        # tool can't silently replace e.g. web_search. redcell connects to one
+        # pre-aggregated gateway namespace, so the only real collision is
+        # builtin<->MCP; full mcp__server__tool prefixing doesn't apply here.
+        shadowed = [t.name for t in kept if not tools.register(t, overwrite=False)]
+        if not denylist_reported:
+            # Log the tool-assembly summary once, after discovery: which tools
+            # the denylist dropped (loud if a term matched nothing — that's a
+            # silently-enabled "denied" capability) and any MCP tools shadowed by
+            # a builtin of the same name.
             denylist_reported.append(True)
             log = logging.getLogger("redcell.cli")
-            log.info("denylist dropped %d MCP tool(s): %s", len(dropped), ", ".join(dropped) or "—")
-            stale = unmatched_denylist([t.name for t in gateway_tools], denied)
-            if stale:
+            if denied:
+                log.info(
+                    "denylist dropped %d MCP tool(s): %s", len(dropped), ", ".join(dropped) or "—"
+                )
+                stale = unmatched_denylist([t.name for t in gateway_tools], denied)
+                if stale:
+                    log.warning(
+                        "denylist term(s) matched no gateway tool: %s "
+                        "(tools seen: %s) — capability NOT removed; check names in serve logs",
+                        ", ".join(stale),
+                        ", ".join(t.name for t in gateway_tools) or "none",
+                    )
+            if shadowed:
                 log.warning(
-                    "denylist term(s) matched no gateway tool: %s "
-                    "(tools seen: %s) — capability NOT removed; check names in serve logs",
-                    ", ".join(stale),
-                    ", ".join(t.name for t in gateway_tools) or "none",
+                    "MCP tool(s) shadowed by a builtin of the same name (builtin wins): %s",
+                    ", ".join(shadowed),
                 )
         return Agent(
             llm=LLM(
@@ -140,6 +153,9 @@ def serve(
                 settings.max_tokens,
                 api_base=settings.api_base,
                 api_key=settings.api_key,
+                max_retries=settings.llm_max_retries,
+                retry_base_delay=settings.llm_retry_base_delay,
+                retry_max_delay=settings.llm_retry_max_delay,
             ),
             tools=tools,
             system_prompt=build_system_prompt(
@@ -266,6 +282,9 @@ def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--sy
             settings.max_tokens,
             api_base=settings.api_base,
             api_key=settings.api_key,
+            max_retries=settings.llm_max_retries,
+            retry_base_delay=settings.llm_retry_base_delay,
+            retry_max_delay=settings.llm_retry_max_delay,
         ),
         tools=default_tools(settings),
         system_prompt=build_system_prompt(

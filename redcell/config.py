@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     temperature: float = 0.7
     max_tokens: int = 1024
     max_iterations: int = 25
+    # Transient-error retry for LLM calls (429/5xx/connection). 0 disables.
+    llm_max_retries: int = 5
+    llm_retry_base_delay: float = 0.5
+    llm_retry_max_delay: float = 30.0
     log_level: str = "INFO"
     # Render structured logs as JSON (and optionally to a file) so a scan run
     # produces a machine-readable JSONL event sink for later analysis.

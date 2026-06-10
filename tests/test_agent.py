@@ -1,9 +1,78 @@
+import asyncio
+
 from redcell.agent import Agent
 from redcell.guardrails import REFUSAL, PatternGuardrail
 from redcell.llm import LLMResponse, ToolCall
 from redcell.memory import InMemoryStore
-from redcell.tools import ToolRegistry, tool
+from redcell.tools import Tool, ToolRegistry, tool
 from tests.conftest import StubLLM
+
+
+def _tracked_tool(name: str, tracker: dict, *, concurrency_safe: bool) -> Tool:
+    """A tool that records max simultaneous in-flight count into ``tracker``."""
+
+    async def fn(**kwargs):
+        tracker["active"] += 1
+        tracker["max"] = max(tracker["max"], tracker["active"])
+        await asyncio.sleep(0)  # yield so concurrent runs can interleave
+        await asyncio.sleep(0)
+        tracker["active"] -= 1
+        return name
+
+    fn.__name__ = name
+    return Tool(
+        fn,
+        schema={"type": "object", "properties": {}, "required": []},
+        name=name,
+        concurrency_safe=concurrency_safe,
+    )
+
+
+def _calls(*names) -> LLMResponse:
+    return LLMResponse(
+        text=None,
+        tool_calls=[ToolCall(id=f"c{i}", name=n, arguments={}) for i, n in enumerate(names)],
+    )
+
+
+async def test_read_only_tool_calls_run_in_parallel():
+    tracker = {"active": 0, "max": 0}
+    tools = ToolRegistry(
+        [_tracked_tool(f"ro{i}", tracker, concurrency_safe=True) for i in range(3)]
+    )
+    llm = StubLLM([_calls("ro0", "ro1", "ro2"), LLMResponse(text="done")])
+    agent = Agent(llm=llm, tools=tools)
+    await agent.run_messages([{"role": "user", "content": "go"}])
+    assert tracker["max"] >= 2  # read-only calls overlapped
+
+
+async def test_mutating_tool_calls_run_serially():
+    tracker = {"active": 0, "max": 0}
+    tools = ToolRegistry(
+        [_tracked_tool(f"mu{i}", tracker, concurrency_safe=False) for i in range(3)]
+    )
+    llm = StubLLM([_calls("mu0", "mu1", "mu2"), LLMResponse(text="done")])
+    agent = Agent(llm=llm, tools=tools)
+    await agent.run_messages([{"role": "user", "content": "go"}])
+    assert tracker["max"] == 1  # never more than one mutating call in flight
+
+
+async def test_tool_results_keep_submission_order_across_partitions():
+    tracker = {"active": 0, "max": 0}
+    # Mixed: safe, mutating (barrier), safe — results must still align by index.
+    tools = ToolRegistry(
+        [
+            _tracked_tool("ro0", tracker, concurrency_safe=True),
+            _tracked_tool("mu1", tracker, concurrency_safe=False),
+            _tracked_tool("ro2", tracker, concurrency_safe=True),
+        ]
+    )
+    llm = StubLLM([_calls("ro0", "mu1", "ro2"), LLMResponse(text="done")])
+    agent = Agent(llm=llm, tools=tools)
+    await agent.run_messages([{"role": "user", "content": "go"}])
+    # The second LLM call sees the tool results in submission order.
+    tool_msgs = [m for m in llm.calls[1]["messages"] if m.get("role") == "tool"]
+    assert [m["content"] for m in tool_msgs] == ["ro0", "mu1", "ro2"]
 
 
 @tool

@@ -23,8 +23,13 @@ A `Tool` wraps a callable plus a JSON schema and a description.
   Parameters without a default are marked `required`.
 - Remote tools (MCP) construct `Tool` directly with the upstream `name`,
   `description`, and `inputSchema`.
-- **`ToolRegistry`** holds tools and executes by name. Unknown tools and raised
-  exceptions are returned as `"Error: …"` strings the model can read — never raised.
+- **`ToolRegistry`** holds tools and executes by name, returning a
+  `ToolResult(content, is_error)`. Unknown tools and raised exceptions are flagged
+  `is_error` and wrapped in `<tool_use_error>…</tool_use_error>` (never raised); all
+  results are head/tail truncated to bound the context window. Tools carry
+  fail-closed `read_only`/`concurrency_safe`/`destructive` classification (the agent
+  runs read-only calls in parallel, mutating calls serially) and a `source`
+  (`builtin`/`mcp`); a builtin shadows a same-named MCP tool.
 - Sync functions run in a thread (`asyncio.to_thread`); async functions are awaited.
 
 ## Builtin tools

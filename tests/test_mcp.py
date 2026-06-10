@@ -37,6 +37,10 @@ async def test_manager_wraps_remote_tools():
         assert echo.description == "Echo the text back."
         assert echo.spec()["function"]["parameters"]["properties"]["text"]["type"] == "string"
         assert await echo.call({"text": "hi"}) == "hi"
+        # MCP tools are tagged and classified conservatively (fail-closed).
+        assert echo.source == "mcp"
+        assert echo.is_read_only({}) is False
+        assert echo.is_concurrency_safe({}) is False
 
 
 async def test_manager_tool_error_returns_string():
