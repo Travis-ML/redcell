@@ -76,8 +76,10 @@ prepend system prompt ─▶ ┌────────────────
   calls run in parallel under a bounded pool; a mutating call runs alone as a
   barrier, so a same-turn write+read (or two writes) can't race. Result order
   always matches call order. Tools declare `read_only`/`concurrency_safe` (bool or
-  per-argument predicate); the defaults are fail-closed (assume mutating/serial),
-  and MCP tools keep those conservative defaults.
+  per-argument predicate); the defaults are fail-closed (assume mutating/serial).
+  Known read-only MCP tools (`fetch`, `qdrant-find`, filesystem reads, `grep`) are
+  flagged parallel-safe at assembly via `AGENT_MCP_READONLY_TOOLS`; mutating MCP
+  tools (shell, writes, `qdrant-store`) stay serial.
 - Tool results are returned as a `ToolResult(content, is_error)`. Failures (unknown
   tool, raised exception) are flagged `is_error` and wrapped in `<tool_use_error>…</tool_use_error>`
   so the model reliably recognizes them; all results are head/tail truncated to

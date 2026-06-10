@@ -76,6 +76,7 @@ detail in [security.md](security.md).
 | `AGENT_GUARDRAILS` | bool | `true` | No input blocking or output/tool-result redaction. |
 | `AGENT_SAFETY_RULES` | str (csv) | _(empty)_ | Subset of named safety rules to include (empty = all): `harm,copyright,truthfulness,commitments,disclosure,fairness`. Isolate rules to measure each one's scan-delta contribution. |
 | `AGENT_MCP_TOOL_DENYLIST` | str (csv) | _(empty)_ | All gateway tools enabled. Set e.g. `shell,filesystem` to drop dangerous tools (substring-matched; zero-match terms warn at startup). |
+| `AGENT_MCP_READONLY_TOOLS` | str (csv) | _(empty)_ | MCP tools (name substring, case-insensitive) to run in parallel as read-only. Empty = default (`fetch`, `qdrant-find`, filesystem reads, `grep`); setting it **replaces** the default. Mutating MCP tools (shell, writes, `qdrant-store`) always run serially. |
 
 Booleans accept the usual Pydantic forms: `true/false`, `1/0`, `yes/no`.
 

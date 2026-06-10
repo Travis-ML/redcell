@@ -65,6 +65,47 @@ def unmatched_denylist(tool_names: list[str], denied: set[str]) -> list[str]:
     return sorted(term for term in denied if not any(term in n for n in lowered))
 
 
+# Gateway tools that only read — safe to run in parallel. Mutating tools (shell
+# run_command/run_script, filesystem writes/edits, qdrant-store, browser
+# navigation) are deliberately absent so they keep running serially.
+_DEFAULT_MCP_READONLY = (
+    "fetch",
+    "qdrant-find",
+    "grep",
+    "read_file",
+    "read_text_file",
+    "read_media_file",
+    "read_multiple_files",
+    "list_directory",
+    "directory_tree",
+    "search_files",
+    "get_file_info",
+    "list_allowed_directories",
+)
+
+
+def _mcp_readonly_terms(settings: Settings) -> set[str]:
+    """Read-only MCP match terms: the operator's list, else the built-in default."""
+    raw = {t.strip().lower() for t in settings.mcp_readonly_tools.split(",") if t.strip()}
+    return raw or set(_DEFAULT_MCP_READONLY)
+
+
+def mark_readonly_mcp_tools(tools: list[Tool], terms: set[str]) -> list[str]:
+    """Flag MCP tools matching ``terms`` (substring) as read-only + parallel-safe.
+
+    Returns the names marked. Mutating tools (no match) keep the conservative
+    serial defaults, so a same-turn write+read can't race.
+    """
+    marked: list[str] = []
+    for t in tools:
+        name = t.name.lower()
+        if any(term in name for term in terms):
+            t.read_only = True
+            t.concurrency_safe = True
+            marked.append(t.name)
+    return marked
+
+
 app = typer.Typer(help="redcell command-line interface.")
 
 
@@ -111,12 +152,15 @@ def serve(
 
     manager = MCPManager(lambda: streamable_http_session(settings.gateway_url))
     denied = _denied_mcp_tools(settings)
+    readonly_terms = _mcp_readonly_terms(settings)
     denylist_reported: list[bool] = []  # one-shot guard for the startup summary
 
     def build_agent() -> Agent:
         tools = default_tools(settings)  # builtins registered first — they win collisions
         gateway_tools = manager.tools()  # gateway-provided MCP tools (empty if offline)
         kept, dropped = apply_denylist(gateway_tools, denied)
+        # Flag known read-only MCP tools as parallel-safe; mutating tools stay serial.
+        parallel = mark_readonly_mcp_tools(kept, readonly_terms)
         # Builtins shadow same-named MCP tools (overwrite=False) so a gateway
         # tool can't silently replace e.g. web_search. redcell connects to one
         # pre-aggregated gateway namespace, so the only real collision is
@@ -146,6 +190,11 @@ def serve(
                     "MCP tool(s) shadowed by a builtin of the same name (builtin wins): %s",
                     ", ".join(shadowed),
                 )
+            log.info(
+                "%d MCP tool(s) run in parallel (read-only): %s",
+                len(parallel),
+                ", ".join(parallel) or "—",
+            )
         return Agent(
             llm=LLM(
                 settings.model,

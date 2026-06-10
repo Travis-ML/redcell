@@ -1,6 +1,14 @@
 from typer.testing import CliRunner
 
-from redcell.cli import app, apply_denylist, unmatched_denylist
+from redcell.cli import (
+    _DEFAULT_MCP_READONLY,
+    _mcp_readonly_terms,
+    app,
+    apply_denylist,
+    mark_readonly_mcp_tools,
+    unmatched_denylist,
+)
+from redcell.config import Settings
 from redcell.tools import Tool
 
 
@@ -55,3 +63,27 @@ def test_unmatched_denylist_flags_terms_that_hit_nothing():
 
 def test_unmatched_denylist_empty_when_all_match():
     assert unmatched_denylist(["shell_x", "fetch_y"], {"shell", "fetch"}) == []
+
+
+def test_mcp_readonly_terms_default_when_unset():
+    assert _mcp_readonly_terms(Settings(mcp_readonly_tools="")) == set(_DEFAULT_MCP_READONLY)
+
+
+def test_mcp_readonly_terms_override_replaces_default():
+    terms = _mcp_readonly_terms(Settings(mcp_readonly_tools="qdrant-find, Fetch"))
+    assert terms == {"qdrant-find", "fetch"}  # lowercased, default replaced
+
+
+def test_mark_readonly_flags_matching_mcp_tools_only():
+    # Read-only tools (namespaced or bare) match by substring; mutating ones don't.
+    ro1 = Tool(lambda **k: "x", name="mcp__rag__qdrant-find", source="mcp")
+    ro2 = Tool(lambda **k: "x", name="read_file", source="mcp")
+    mut1 = Tool(lambda **k: "x", name="qdrant-store", source="mcp")
+    mut2 = Tool(lambda **k: "x", name="shell_run_command", source="mcp")
+    marked = mark_readonly_mcp_tools([ro1, ro2, mut1, mut2], set(_DEFAULT_MCP_READONLY))
+    assert set(marked) == {"mcp__rag__qdrant-find", "read_file"}
+    assert ro1.is_read_only({}) and ro1.is_concurrency_safe({})
+    assert ro2.is_concurrency_safe({})
+    # Mutating tools keep the conservative serial defaults.
+    assert not mut1.is_concurrency_safe({})
+    assert not mut2.is_concurrency_safe({})

@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # (e.g. "shell,filesystem" to remove the worst exfiltration surface). Empty
     # = all gateway tools enabled.
     mcp_tool_denylist: str = ""
+    # MCP tools (matched by name substring, case-insensitive) to treat as
+    # read-only and safe to run in parallel within a turn. Empty = a built-in
+    # default covering the gateway's known read-only tools (fetch, qdrant-find,
+    # filesystem reads, grep). Mutating MCP tools (shell, writes, qdrant-store)
+    # always run serially, preserving the same-turn write+read race fix.
+    mcp_readonly_tools: str = ""
 
     # Stateful sessions: when a request carries this header (or a body
     # `session_id`/`sessionId`), the server remembers that conversation's history
