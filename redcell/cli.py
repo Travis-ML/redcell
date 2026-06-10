@@ -14,7 +14,7 @@ from . import __version__
 from .accounting import CostAccountant
 from .agent import Agent
 from .config import Settings
-from .gateway import GatewaySupervisor
+from .gateway import GatewaySupervisor, probe_ssh_host
 from .guardrails import make_guardrail
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
@@ -327,7 +327,24 @@ def serve(
         )
     if post_startup is not None:
         typer.echo(f"  docs:    ingesting PDFs from '{settings.docs_dir}/' into the RAG store")
+    _report_exec_vm(settings, denied)
     uvicorn.run(api, host=bind_host, port=bind_port)
+
+
+def _report_exec_vm(settings: Settings, denied: set[str]) -> None:
+    """Probe the execution VM and print whether shell/filesystem will work."""
+    if not settings.exec_vm_host:
+        return
+    if {"shell", "filesystem"} <= denied:
+        typer.echo("  exec VM: shell/filesystem denied via denylist — VM not needed")
+        return
+    ok, detail = probe_ssh_host(settings.exec_vm_host, timeout=settings.exec_vm_timeout)
+    if ok:
+        typer.echo(f"  exec VM: '{settings.exec_vm_host}' reachable — shell/filesystem enabled")
+    else:
+        typer.echo(f"  exec VM: '{settings.exec_vm_host}' NOT reachable ({detail})")
+        typer.echo("           shell/filesystem will error until set up (other tools still work)")
+        typer.echo("           setup: docs/tools-and-gateway.md#setting-up-the-execution-vm")
 
 
 @app.command()

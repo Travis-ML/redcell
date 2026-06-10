@@ -141,3 +141,10 @@ class Settings(BaseSettings):
     # If false, `serve` does not spawn the gateway (e.g. you run it elsewhere).
     gateway_autostart: bool = True
     gateway_ready_timeout: float = 30.0
+
+    # Execution VM: the `shell`/`filesystem` tools run on a Debian VM reached via
+    # this SSH host alias (see agentgateway/config.yaml). At startup `serve` probes
+    # it and reports whether those tools will work. Empty disables the probe; set
+    # it to match the alias if you changed it in the gateway config.
+    exec_vm_host: str = "debian-agent"
+    exec_vm_timeout: float = 5.0

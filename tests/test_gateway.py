@@ -2,9 +2,11 @@
 """GatewaySupervisor lifecycle, tested with a stub subprocess (no real gateway)."""
 
 import socket
+import subprocess
 import sys
+import types
 
-from redcell.gateway import GatewaySupervisor
+from redcell.gateway import GatewaySupervisor, probe_ssh_host
 
 
 def _free_port() -> int:
@@ -13,6 +15,38 @@ def _free_port() -> int:
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def _fake_proc(returncode: int, stderr: str = ""):
+    return types.SimpleNamespace(returncode=returncode, stderr=stderr, stdout="")
+
+
+def test_probe_ssh_host_reachable():
+    ok, detail = probe_ssh_host("debian-agent", runner=lambda *a, **k: _fake_proc(0))
+    assert ok and detail == "reachable"
+
+
+def test_probe_ssh_host_unreachable_reports_last_stderr_line():
+    def runner(*a, **k):
+        return _fake_proc(255, "warn\nssh: Could not resolve hostname debian-agent")
+
+    ok, detail = probe_ssh_host("debian-agent", runner=runner)
+    assert not ok
+    assert "Could not resolve hostname" in detail
+
+
+def test_probe_ssh_host_timeout():
+    def runner(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="ssh", timeout=5)
+
+    ok, detail = probe_ssh_host("debian-agent", runner=runner)
+    assert not ok and "timed out" in detail
+
+
+def test_probe_ssh_host_missing_ssh(monkeypatch):
+    monkeypatch.setattr("redcell.gateway.shutil.which", lambda _: None)
+    ok, detail = probe_ssh_host("debian-agent")
+    assert not ok and "ssh client not found" in detail
 
 
 async def test_missing_binary_degrades():

@@ -9,8 +9,51 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+import subprocess
+from collections.abc import Callable
 
 logger = logging.getLogger("redcell.gateway")
+
+
+def probe_ssh_host(
+    host: str,
+    *,
+    timeout: float = 5.0,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> tuple[bool, str]:
+    """Best-effort check that ``host`` is reachable over non-interactive SSH.
+
+    Mirrors how the gateway invokes the execution VM (``ssh -o BatchMode=yes``),
+    so a True here means the ``shell``/``filesystem`` tools should work. Never
+    raises — returns ``(ok, detail)`` where ``detail`` is a short reason on
+    failure. ``runner`` is injectable for tests.
+    """
+    if not shutil.which("ssh"):
+        return False, "ssh client not found on PATH"
+    try:
+        proc = runner(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={max(1, int(timeout))}",
+                host,
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "connection timed out"
+    except Exception as exc:  # best-effort: never block startup
+        return False, f"probe failed: {exc}"
+    if proc.returncode == 0:
+        return True, "reachable"
+    stderr = (proc.stderr or "").strip().splitlines()
+    return False, stderr[-1] if stderr else f"ssh exit code {proc.returncode}"
 
 
 class GatewaySupervisor:

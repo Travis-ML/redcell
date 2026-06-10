@@ -107,6 +107,8 @@ agent to its aggregated MCP endpoint. See [tools-and-gateway.md](tools-and-gatew
 | `AGENT_GATEWAY_URL` | str | `http://127.0.0.1:3030/mcp` | The aggregated MCP endpoint the agent connects to. Tune the path (root vs `/mcp`) to match your gateway config. |
 | `AGENT_GATEWAY_AUTOSTART` | bool | `true` | If false, `serve` does not spawn the gateway (run it yourself elsewhere). |
 | `AGENT_GATEWAY_READY_TIMEOUT` | float | `30.0` | Seconds to wait for the gateway port to accept connections before continuing without it. |
+| `AGENT_EXEC_VM_HOST` | str | `debian-agent` | SSH host alias for the code-execution VM (`shell`/`filesystem`). `serve` probes it at startup and reports whether those tools will work. Empty disables the probe; change it to match if you renamed the alias in the gateway config. |
+| `AGENT_EXEC_VM_TIMEOUT` | float | `5.0` | SSH connect timeout (seconds) for the startup probe. |
 
 > The field name is `gateway_config_path` but the env var is `AGENT_GATEWAY_CONFIG`
 > (the `.env.example` and this table are the source of truth for the env name).
