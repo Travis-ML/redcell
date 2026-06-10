@@ -24,11 +24,21 @@ LIFECYCLE_EVENTS = (
 )
 
 
+# The MCP streamable-HTTP transport logs benign teardown-race noise on every
+# short-lived session close: an "Error parsing SSE message" (actually a
+# ClosedResourceError as the GET listener stream is torn down), a moot reconnect,
+# and "Session termination failed: 202" (AgentGateway returns 202 Accepted for the
+# DELETE, which the SDK doesn't whitelist alongside 200/204). None affect tool
+# calls — they succeed over the POST stream — so we quiet this logger by default.
+_NOISY_MCP_LOGGER = "mcp.client.streamable_http"
+
+
 def configure_logging(
     level: str = "INFO",
     *,
     json_logs: bool = False,
     log_file: str | None = None,
+    quiet_mcp_transport: bool = True,
 ) -> None:
     """Configure structlog + stdlib logging once at startup.
 
@@ -38,9 +48,17 @@ def configure_logging(
             Combined with ``log_file`` this yields a JSONL event sink a scanner
             run can be analyzed from afterwards.
         log_file: if set, write logs to this file (append) instead of stderr.
+        quiet_mcp_transport: silence the MCP streamable-HTTP transport's benign
+            teardown-race logs (see :data:`_NOISY_MCP_LOGGER`). Set False to keep
+            them when debugging the transport itself.
     """
     num_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(level=num_level, force=True)
+    # Raise the transport logger above ERROR so its teardown noise is suppressed
+    # (it logs the SSE race at ERROR); restore to the chosen level when not quiet.
+    logging.getLogger(_NOISY_MCP_LOGGER).setLevel(
+        logging.CRITICAL if quiet_mcp_transport else num_level
+    )
     renderer = structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
     # structlog renders via its own PrintLogger (not stdlib handlers); point it at
     # the file directly so a JSON run lands in a JSONL sink rather than stdout.

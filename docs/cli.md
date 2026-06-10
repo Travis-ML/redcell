@@ -64,6 +64,8 @@ Serving agent (anthropic/claude-opus-4-8) as model 'redcell'.
   local:  http://127.0.0.1:8800/v1
   docker: http://host.docker.internal:8800/v1  (use this in Open WebUI)
   gateway: launching 'agentgateway' on :3030
+  qdrant:  docker compose up -d qdrant (RAG store on :6333)
+  docs:    ingesting PDFs from 'documents/' into the RAG store
 ```
 
 If `AGENT_MCP_TOOL_DENYLIST` is set, the denied tool names are printed too.
@@ -72,6 +74,18 @@ If `AGENT_MCP_TOOL_DENYLIST` is set, the denied tool names are printed too.
 [configuration.md](configuration.md)). If the binary is missing or never becomes
 ready, `serve` logs a warning and runs with builtin tools only — it does not fail.
 Set `AGENT_GATEWAY_AUTOSTART=false` to run the gateway yourself.
+
+**Qdrant (RAG store):** controlled by `AGENT_QDRANT_*`. `serve` brings Qdrant up via
+`docker compose up -d` (started before the gateway so the `rag` target finds a store)
+and waits for its port. Needs Docker; if absent it logs a warning and runs without RAG.
+Left running on exit by default — set `AGENT_QDRANT_STOP_ON_EXIT=true` to stop it, or
+`AGENT_QDRANT_AUTOSTART=false` to manage it yourself. See [rag.md](rag.md).
+
+**Document ingestion:** controlled by `AGENT_DOCS_*`. After the gateway/Qdrant are up,
+PDFs in `AGENT_DOCS_DIR` (default `documents/`) are chunked and stored into the RAG store
+in the background, so the agent can retrieve them via `qdrant-find`. A hash manifest skips
+unchanged files across restarts. Disable with `AGENT_DOCS_AUTOLOAD=false`. See
+[rag.md](rag.md#auto-ingesting-your-own-pdfs-documents-folder).
 
 ---
 

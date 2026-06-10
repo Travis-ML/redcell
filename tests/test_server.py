@@ -205,6 +205,48 @@ def test_lifespan_starts_and_stops_gateway_and_manager():
     assert gw.stopped and mgr.exited
 
 
+def test_lifespan_starts_qdrant_before_gateway_and_stops_both():
+    events: list[str] = []
+
+    class _Recorder:
+        def __init__(self, name):
+            self.name = name
+
+        async def start(self):
+            events.append(f"start:{self.name}")
+
+        async def stop(self):
+            events.append(f"stop:{self.name}")
+
+    qd, gw = _Recorder("qdrant"), _Recorder("gateway")
+
+    def factory():
+        return Agent(llm=StubLLM([LLMResponse(text="ok")]), tools=ToolRegistry())
+
+    app = create_app(factory, model_id="redcell", gateway=gw, qdrant=qd)
+    with TestClient(app) as client:
+        assert client.get("/v1/models").status_code == 200
+    # Qdrant up before the gateway; teardown unwinds in reverse (LIFO).
+    assert events == ["start:qdrant", "start:gateway", "stop:gateway", "stop:qdrant"]
+
+
+def test_post_startup_runs_after_ready():
+    import threading
+
+    ran = threading.Event()
+
+    async def post():
+        ran.set()
+
+    def factory():
+        return Agent(llm=StubLLM([LLMResponse(text="ok")]), tools=ToolRegistry())
+
+    app = create_app(factory, model_id="redcell", post_startup=post)
+    with TestClient(app) as client:
+        assert client.get("/v1/models").status_code == 200
+        assert ran.wait(timeout=2.0)  # the background startup task executed
+
+
 def test_gateway_tool_is_callable_through_the_endpoint():
     async def ping(**kwargs):
         return "pong"

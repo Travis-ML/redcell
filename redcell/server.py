@@ -8,11 +8,12 @@ stays provider- and UI-agnostic; this module only translates HTTP <-> agent.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -35,6 +36,8 @@ def create_app(
     api_key: str | None = None,
     gateway: object | None = None,
     mcp_manager: object | None = None,
+    qdrant: object | None = None,
+    post_startup: Callable[[], Awaitable[None]] | None = None,
     session_store: SessionStore | None = None,
     session_header: str = "x-redcell-session",
 ) -> FastAPI:
@@ -53,6 +56,12 @@ def create_app(
             driven by the app lifespan.
         mcp_manager: optional async context manager exposing ``tools()``; entered
             for the app's lifetime so the MCP session stays connected.
+        qdrant: optional RAG-store supervisor with async ``start()``/``stop()``;
+            started before the gateway so the gateway's ``rag`` target has a store
+            to connect to.
+        post_startup: optional coroutine run once after the gateway/MCP manager are
+            ready (e.g. ingesting documents into the RAG store). Runs as a background
+            task so it never blocks the server binding; cancelled on shutdown.
         session_store: if set, enables stateful sessions — a request bearing a
             session id recalls/extends that session's history server-side.
         session_header: request header carrying the client-generated session id
@@ -62,16 +71,30 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         # AsyncExitStack guarantees teardown even if a later startup step fails:
-        # the gateway stop is registered immediately after it starts, so a failed
-        # MCP connection can't leak the gateway process. Unwinds LIFO (manager
-        # exits, then gateway stops) — the reverse of startup.
+        # each stop is registered immediately after its start, so a failed later
+        # step can't leak an earlier one. Qdrant comes up first so the gateway's
+        # `rag` target finds a store; teardown unwinds LIFO (manager exits, then
+        # gateway stops, then qdrant stops) — the reverse of startup.
         async with AsyncExitStack() as stack:
+            if qdrant is not None:
+                await qdrant.start()
+                stack.push_async_callback(qdrant.stop)
             if gateway is not None:
                 await gateway.start()
                 stack.push_async_callback(gateway.stop)
             if mcp_manager is not None:
                 await stack.enter_async_context(mcp_manager)
-            yield
+            # Run post-startup work (e.g. document ingestion) in the background so
+            # it can't delay the server binding; it uses tools the manager just
+            # discovered, and is cancelled before that manager/gateway tears down.
+            task = asyncio.create_task(post_startup()) if post_startup is not None else None
+            try:
+                yield
+            finally:
+                if task is not None and not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
 
     app = FastAPI(title="redcell OpenAI-compatible API", lifespan=lifespan)
 

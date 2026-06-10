@@ -19,7 +19,9 @@ from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
 from .prompts import build_system_prompt
+from .qdrant import QdrantSupervisor
 from .rag.corpus import default_corpus_path, load_corpus
+from .rag.documents import ingest_documents
 from .rag.seed import seed as rag_seed_corpus
 from .searxng import make_web_search
 from .server import create_app
@@ -100,7 +102,12 @@ def serve(
 ) -> None:
     """Run the OpenAI-compatible HTTP server (launches AgentGateway too)."""
     settings = Settings()
-    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
+    configure_logging(
+        settings.log_level,
+        json_logs=settings.log_json,
+        log_file=settings.log_file,
+        quiet_mcp_transport=settings.log_quiet_mcp_transport,
+    )
 
     manager = MCPManager(lambda: streamable_http_session(settings.gateway_url))
     denied = _denied_mcp_tools(settings)
@@ -155,10 +162,36 @@ def serve(
             ready_timeout=settings.gateway_ready_timeout,
         )
 
+    qdrant = None
+    if settings.qdrant_autostart:
+        qdrant = QdrantSupervisor(
+            compose_file=settings.qdrant_compose_file,
+            service=settings.qdrant_service,
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+            ready_timeout=settings.qdrant_ready_timeout,
+            stop_on_exit=settings.qdrant_stop_on_exit,
+        )
+
     session_store = SessionStore(
         max_sessions=settings.session_max,
         ttl_seconds=settings.session_ttl_seconds,
     )
+
+    post_startup = None
+    if settings.docs_autoload and settings.docs_dir:
+
+        async def post_startup() -> None:
+            try:
+                await ingest_documents(
+                    manager.tools(),
+                    settings.docs_dir,
+                    manifest_path=settings.docs_manifest_path,
+                    chunk_size=settings.docs_chunk_size,
+                    chunk_overlap=settings.docs_chunk_overlap,
+                )
+            except Exception as exc:  # ingestion must never crash the server
+                logging.getLogger("redcell.cli").warning("document ingestion failed: %s", exc)
 
     api = create_app(
         build_agent,
@@ -166,6 +199,8 @@ def serve(
         api_key=settings.server_api_key,
         gateway=gateway,
         mcp_manager=manager,
+        qdrant=qdrant,
+        post_startup=post_startup,
         session_store=session_store,
         session_header=settings.session_header,
     )
@@ -181,6 +216,13 @@ def serve(
     typer.echo(f"  docker: http://host.docker.internal:{bind_port}/v1  (use this in Open WebUI)")
     if gateway is not None:
         typer.echo(f"  gateway: launching '{settings.gateway_bin}' on :{settings.gateway_port}")
+    if qdrant is not None:
+        typer.echo(
+            f"  qdrant:  docker compose up -d {settings.qdrant_service} "
+            f"(RAG store on :{settings.qdrant_port})"
+        )
+    if post_startup is not None:
+        typer.echo(f"  docs:    ingesting PDFs from '{settings.docs_dir}/' into the RAG store")
     uvicorn.run(api, host=bind_host, port=bind_port)
 
 
@@ -190,7 +232,12 @@ def rag_seed(
 ) -> None:
     """Load the RAG corpus into the store via the running gateway's qdrant-store tool."""
     settings = Settings()
-    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
+    configure_logging(
+        settings.log_level,
+        json_logs=settings.log_json,
+        log_file=settings.log_file,
+        quiet_mcp_transport=settings.log_quiet_mcp_transport,
+    )
     path = Path(corpus) if corpus else default_corpus_path()
     docs = load_corpus(path)
 
@@ -206,7 +253,12 @@ def rag_seed(
 def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--system")) -> None:
     """Start an interactive chat session with a basic agent."""
     settings = Settings()
-    configure_logging(settings.log_level, json_logs=settings.log_json, log_file=settings.log_file)
+    configure_logging(
+        settings.log_level,
+        json_logs=settings.log_json,
+        log_file=settings.log_file,
+        quiet_mcp_transport=settings.log_quiet_mcp_transport,
+    )
     agent = Agent(
         llm=LLM(
             settings.model,

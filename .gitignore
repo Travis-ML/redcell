@@ -10,3 +10,6 @@ build/
 
 # Playwright MCP server scratch (traces/output written to CWD)
 .playwright-mcp/
+
+# redcell runtime cache (document-ingestion manifest, etc.)
+.redcell/

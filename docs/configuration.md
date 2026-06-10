@@ -28,6 +28,7 @@ The env var for any field is `AGENT_` + the field name upper-cased
 | `AGENT_LOG_LEVEL` | str | `INFO` | Log level for structlog/stdlib (`DEBUG`/`INFO`/`WARNING`/…). |
 | `AGENT_LOG_JSON` | bool | `false` | Render structured events as JSON instead of the console format. |
 | `AGENT_LOG_FILE` | str? | _(unset)_ | Write events to this file (append) instead of stderr. With `AGENT_LOG_JSON=true` this is a JSONL event sink per scan. |
+| `AGENT_LOG_QUIET_MCP_TRANSPORT` | bool | `true` | Silence the MCP streamable-HTTP transport's benign teardown-race logs (SSE `ClosedResourceError`, `Session termination failed: 202`). Set `false` to keep them when debugging the transport. |
 
 ### `AGENT_MODEL` examples
 
@@ -98,6 +99,37 @@ agent to its aggregated MCP endpoint. See [tools-and-gateway.md](tools-and-gatew
 
 > The field name is `gateway_config_path` but the env var is `AGENT_GATEWAY_CONFIG`
 > (the `.env.example` and this table are the source of truth for the env name).
+
+## Qdrant (RAG store)
+
+`redcell serve` brings up a Dockerized Qdrant the same way it launches the gateway —
+via `docker compose up -d` — and waits for its REST port before starting the gateway
+(so the `rag` target finds a store). Needs Docker; if absent it logs a warning and the
+server runs without RAG. See [rag.md](rag.md).
+
+| Env var | Type | Default | Meaning |
+| ------- | ---- | ------- | ------- |
+| `AGENT_QDRANT_AUTOSTART` | bool | `true` | If false, `serve` does not start Qdrant (run it yourself). |
+| `AGENT_QDRANT_COMPOSE_FILE` | str | `docker-compose.yml` | Compose file passed as `-f`. |
+| `AGENT_QDRANT_SERVICE` | str | `qdrant` | Compose service name to bring up. |
+| `AGENT_QDRANT_HOST` | str | `127.0.0.1` | Host for the readiness probe. |
+| `AGENT_QDRANT_PORT` | int | `6333` | Qdrant REST port (readiness probe target). |
+| `AGENT_QDRANT_READY_TIMEOUT` | float | `30.0` | Seconds to wait for the port after compose returns. |
+| `AGENT_QDRANT_STOP_ON_EXIT` | bool | `false` | If true, `docker compose stop` the service when `serve` exits. Left running by default (persistent data service). |
+
+## Documents (PDF ingestion)
+
+At `serve` startup, PDFs in `docs_dir` are chunked and stored into Qdrant (via the
+gateway's `qdrant-store`) so the agent can retrieve them with `qdrant-find`. A hash
+manifest skips files already ingested unchanged. See [rag.md](rag.md#auto-ingesting-your-own-pdfs-documents-folder).
+
+| Env var | Type | Default | Meaning |
+| ------- | ---- | ------- | ------- |
+| `AGENT_DOCS_AUTOLOAD` | bool | `true` | Master switch for startup ingestion. False = skip entirely. |
+| `AGENT_DOCS_DIR` | str | `documents` | Folder scanned for top-level `*.pdf` (flat, no recursion). Missing folder = no-op. |
+| `AGENT_DOCS_MANIFEST_PATH` | str | `.redcell/ingested.json` | Where the file-hash dedup manifest is stored. |
+| `AGENT_DOCS_CHUNK_SIZE` | int | `1000` | Characters per chunk. |
+| `AGENT_DOCS_CHUNK_OVERLAP` | int | `150` | Character overlap between adjacent chunks. |
 
 ## Full `.env.example`
 

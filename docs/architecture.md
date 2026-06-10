@@ -13,6 +13,7 @@ touching the agent loop.
 | `redcell/tools.py` | `Tool`, the `@tool` decorator (schema from type hints), and `ToolRegistry` (executes by name, catches errors as strings). |
 | `redcell/mcp.py` | `MCPManager` — discovers tools from one upstream MCP endpoint (AgentGateway) and wraps each as a local `Tool`. |
 | `redcell/gateway.py` | `GatewaySupervisor` — spawns and health-checks the AgentGateway child process. |
+| `redcell/qdrant.py` | `QdrantSupervisor` — brings the RAG store up via `docker compose` and health-checks its port. |
 | `redcell/server.py` | FastAPI app exposing the OpenAI-compatible `/v1/*` endpoints. |
 | `redcell/sessions.py` | `SessionStore` — server-side conversation memory keyed by session id (LRU + TTL). |
 | `redcell/memory.py` | `Memory` interface + `InMemoryStore` (per-conversation message history). |
@@ -20,7 +21,7 @@ touching the agent loop.
 | `redcell/guardrails.py` | `Guardrail` protocol + `PatternGuardrail`/`NullGuardrail`. |
 | `redcell/observability.py` | `Hooks` (lifecycle events) + structured logging. |
 | `redcell/searxng.py` | The builtin `web_search` tool over a SearXNG instance. |
-| `redcell/rag/` | RAG corpus loading + seeding through the gateway's `qdrant-store`. |
+| `redcell/rag/` | RAG corpus loading, seeding, and startup **PDF document ingestion** (`documents.py`) through the gateway's `qdrant-store`. |
 | `redcell/config.py` | `Settings` — typed config from env / `.env`. |
 | `redcell/cli.py` | Typer CLI wiring everything together. |
 

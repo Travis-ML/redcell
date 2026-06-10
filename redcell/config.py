@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # produces a machine-readable JSONL event sink for later analysis.
     log_json: bool = False
     log_file: str | None = None
+    # Silence the MCP streamable-HTTP transport's benign teardown-race logs
+    # (SSE ClosedResourceError + "Session termination failed: 202"). Set false to
+    # keep them when debugging the transport itself.
+    log_quiet_mcp_transport: bool = True
 
     # `redcell serve` — the OpenAI-compatible HTTP server.
     server_host: str = "0.0.0.0"
@@ -68,6 +72,29 @@ class Settings(BaseSettings):
 
     # Base URL of the SearXNG instance backing the `web_search` tool.
     searxng_url: str = "http://127.0.0.1:8989"
+
+    # Qdrant (RAG vector store) — `serve` brings it up via docker compose, the
+    # same way it launches the gateway, so the gateway's `rag` target has a store
+    # to connect to. Degrades gracefully if Docker is unavailable.
+    qdrant_autostart: bool = True
+    qdrant_compose_file: str = "docker-compose.yml"
+    qdrant_service: str = "qdrant"
+    # Host/port of the Qdrant REST API (used for the readiness probe).
+    qdrant_host: str = "127.0.0.1"
+    qdrant_port: int = 6333
+    qdrant_ready_timeout: float = 30.0
+    # Persistent data service: left running on shutdown by default. Set true to
+    # `docker compose stop` it when `serve` exits (full gateway parity).
+    qdrant_stop_on_exit: bool = False
+
+    # Document ingestion: at `serve` startup, PDFs in `docs_dir` are chunked and
+    # stored into Qdrant (via the gateway's qdrant-store) so the agent can retrieve
+    # them with qdrant-find. A hash manifest skips unchanged files across restarts.
+    docs_autoload: bool = True
+    docs_dir: str = "documents"  # flat folder of *.pdf (no recursion)
+    docs_manifest_path: str = ".redcell/ingested.json"
+    docs_chunk_size: int = 1000  # chars per chunk
+    docs_chunk_overlap: int = 150  # char overlap between adjacent chunks
 
     # AgentGateway — `serve` launches this process and proxies MCP traffic through it.
     gateway_bin: str = "agentgateway"

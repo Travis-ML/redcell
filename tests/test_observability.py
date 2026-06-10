@@ -16,6 +16,21 @@ def test_hooks_invoke_registered_callback():
     assert seen == [{"name": "calc", "args": {"a": 1}}]
 
 
+def test_quiet_mcp_transport_suppresses_noise_logger():
+    import logging
+
+    from redcell.observability import configure_logging
+
+    configure_logging("INFO", quiet_mcp_transport=True)
+    transport = logging.getLogger("mcp.client.streamable_http")
+    # ERROR-level teardown noise is suppressed when quiet (level above ERROR).
+    assert not transport.isEnabledFor(logging.ERROR)
+
+    configure_logging("INFO", quiet_mcp_transport=False)
+    assert transport.isEnabledFor(logging.ERROR)  # restored for debugging
+    configure_logging("INFO")  # leave the default quiet for other tests
+
+
 def test_configure_logging_json_to_file(tmp_path):
     import json
     import logging
