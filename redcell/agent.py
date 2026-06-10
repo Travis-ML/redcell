@@ -12,6 +12,7 @@ from .guardrails import Guardrail, NullGuardrail
 from .llm import LLMResponse
 from .memory import InMemoryStore, Memory
 from .observability import Hooks
+from .permissions import NullPolicy, Policy
 from .tools import ToolRegistry
 
 # Tool results are echoed into the `tool_end` event for observability; cap the
@@ -71,6 +72,7 @@ class Agent:
         guardrail: Guardrail | None = None,
         enforce_system_prompt: bool = False,
         max_concurrent_tools: int = 8,
+        policy: Policy | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools or ToolRegistry()
@@ -81,6 +83,8 @@ class Agent:
         self.guardrail = guardrail or NullGuardrail()
         self.enforce_system_prompt = enforce_system_prompt
         self.max_concurrent_tools = max(1, max_concurrent_tools)
+        # Permission policy consulted before every tool dispatch (default: allow all).
+        self.policy = policy or NullPolicy()
 
     async def _blocked_input(self, text: str, run_id: str) -> ChatResult | None:
         """Screen one user input; return a refusal result if the guardrail blocks."""
@@ -302,6 +306,38 @@ class Agent:
         # attempt in a tool call is the point — the gateway is the choke point.
         self.hooks.emit("tool_start", run_id=run_id, name=name, args=arguments, id=call_id)
         started = time.perf_counter()
+
+        # Permission gate: consult the policy before the tool runs. A blocked call
+        # never reaches the tool; an "ask" resolved to allow still runs but is
+        # recorded. Plain allows are silent (no event) to avoid noise.
+        decision = self.policy.evaluate(name, arguments)
+        if decision.behavior != "allow":
+            self.hooks.emit(
+                "permission",
+                run_id=run_id,
+                name=name,
+                id=call_id,
+                behavior=decision.behavior,
+                allowed=decision.allowed,
+                reason=decision.reason,
+                rule=decision.rule,
+            )
+        if not decision.allowed:
+            blocked = (
+                f"<tool_use_error>blocked by permission policy "
+                f"({decision.behavior}: {decision.rule or decision.reason})</tool_use_error>"
+            )
+            self.hooks.emit(
+                "tool_end",
+                run_id=run_id,
+                name=name,
+                id=call_id,
+                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                is_error=True,
+                result=blocked,
+            )
+            return blocked
+
         outcome = await self.tools.invoke(name, arguments)
         result = outcome.content
         duration_ms = round((time.perf_counter() - started) * 1000, 2)

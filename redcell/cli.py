@@ -19,6 +19,7 @@ from .guardrails import make_guardrail
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
+from .permissions import NullPolicy, Policy, PolicyEngine, Rule, parse_rule
 from .prompts import build_system_prompt
 from .qdrant import QdrantSupervisor
 from .rag.corpus import default_corpus_path, load_corpus
@@ -39,6 +40,28 @@ def _safety_rules(settings: Settings) -> list[str] | None:
     """Parse AGENT_SAFETY_RULES; None (empty) means include all rules."""
     names = [name.strip() for name in settings.safety_rules.split(",") if name.strip()]
     return names or None
+
+
+def make_policy(settings: Settings, content_matcher=None) -> Policy:
+    """Build the permission policy from settings (NullPolicy when disabled)."""
+    if not settings.permissions:
+        return NullPolicy()
+    rules: list[Rule] = []
+    for csv, behavior in (
+        (settings.permission_allow, "allow"),
+        (settings.permission_deny, "deny"),
+        (settings.permission_ask, "ask"),
+    ):
+        for entry in csv.split(","):
+            entry = entry.strip()
+            if entry:
+                rules.append(parse_rule(entry, behavior))
+    return PolicyEngine(
+        rules,
+        default_behavior=settings.permission_default,
+        ask_resolution=settings.permission_ask_resolution,
+        content_matcher=content_matcher,
+    )
 
 
 def apply_denylist(tools: list[Tool], denied: set[str]) -> tuple[list[Tool], list[str]]:
@@ -221,6 +244,7 @@ def serve(
             hooks=hooks,
             max_iterations=settings.max_iterations,
             guardrail=make_guardrail(settings.guardrails),
+            policy=make_policy(settings),
             # When safety is on, the policy must not be suppressible by a client
             # sending its own system message (the stateless-path bypass).
             enforce_system_prompt=settings.safety_prompt,
@@ -350,6 +374,7 @@ def chat(system_prompt: str = typer.Option("You are a helpful assistant.", "--sy
         hooks=logging_hooks(),
         max_iterations=settings.max_iterations,
         guardrail=make_guardrail(settings.guardrails),
+        policy=make_policy(settings),
     )
 
     typer.echo(f"redcell chat ({settings.model}). Ctrl-C to exit.")

@@ -78,6 +78,10 @@ detail in [security.md](security.md).
 | `AGENT_SAFETY_RULES` | str (csv) | _(empty)_ | Subset of named safety rules to include (empty = all): `harm,copyright,truthfulness,commitments,disclosure,fairness`. Isolate rules to measure each one's scan-delta contribution. |
 | `AGENT_MCP_TOOL_DENYLIST` | str (csv) | _(empty)_ | All gateway tools enabled. Set e.g. `shell,filesystem` to drop dangerous tools (substring-matched; zero-match terms warn at startup). |
 | `AGENT_MCP_READONLY_TOOLS` | str (csv) | _(empty)_ | MCP tools (name substring, case-insensitive) to run in parallel as read-only. Empty = default (`fetch`, `qdrant-find`, filesystem reads, `grep`); setting it **replaces** the default. Mutating MCP tools (shell, writes, `qdrant-store`) always run serially. |
+| `AGENT_PERMISSIONS` | bool | `true` | Permission policy engine on. `false` = NullPolicy (everything allowed, for baselining). |
+| `AGENT_PERMISSION_ALLOW` / `_DENY` / `_ASK` | str (csv) | _(empty)_ | Rules, each `Tool` (whole tool) or `Tool(content)` (argument-scoped). deny > ask > allow. Content can't contain a comma via env. |
+| `AGENT_PERMISSION_DEFAULT` | str | `allow` | Behavior when no rule matches (`allow`/`deny`/`ask`). |
+| `AGENT_PERMISSION_ASK_RESOLUTION` | str | `deny` | How an `ask` resolves on the headless server (`deny`/`allow`); the call is still recorded as an `ask`. |
 
 Booleans accept the usual Pydantic forms: `true/false`, `1/0`, `yes/no`.
 

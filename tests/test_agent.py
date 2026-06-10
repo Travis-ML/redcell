@@ -307,6 +307,78 @@ async def test_events_share_run_id_and_tool_end_echoes_result():
     assert "duration_ms" in tool_end
 
 
+async def test_policy_denied_tool_is_blocked_before_execution():
+    from redcell.observability import Hooks
+    from redcell.permissions import PolicyEngine, parse_rule
+
+    ran = {"called": False}
+
+    @tool
+    def danger(cmd: str) -> str:
+        """Dangerous."""
+        ran["called"] = True
+        return "executed"
+
+    events: list[tuple[str, dict]] = []
+    hooks = Hooks()
+    for name in ("permission", "tool_end"):
+        hooks.on(name, lambda _e=name, **kw: events.append((_e, kw)))
+
+    llm = StubLLM(
+        [
+            LLMResponse(
+                text=None,
+                tool_calls=[ToolCall(id="c1", name="danger", arguments={"cmd": "x"})],
+            ),
+            LLMResponse(text="ok"),
+        ]
+    )
+    agent = Agent(
+        llm=llm,
+        tools=ToolRegistry([danger]),
+        hooks=hooks,
+        policy=PolicyEngine([parse_rule("danger", "deny")]),
+    )
+    await agent.run_messages([{"role": "user", "content": "go"}])
+
+    assert ran["called"] is False  # tool never executed
+    perm = next(kw for n, kw in events if n == "permission")
+    assert perm["behavior"] == "deny" and perm["allowed"] is False
+    tool_end = next(kw for n, kw in events if n == "tool_end")
+    assert tool_end["is_error"] is True
+    # The model saw a policy-block error in place of a tool result.
+    tool_msg = next(m for m in llm.calls[1]["messages"] if m.get("role") == "tool")
+    assert "blocked by permission policy" in tool_msg["content"]
+
+
+async def test_policy_ask_resolved_allow_runs_and_records():
+    from redcell.observability import Hooks
+    from redcell.permissions import PolicyEngine, parse_rule
+
+    events: list[tuple[str, dict]] = []
+    hooks = Hooks()
+    hooks.on("permission", lambda **kw: events.append(("permission", kw)))
+
+    llm = StubLLM(
+        [
+            LLMResponse(
+                text=None, tool_calls=[ToolCall(id="c1", name="add", arguments={"a": 1, "b": 2})]
+            ),
+            LLMResponse(text="3"),
+        ]
+    )
+    agent = Agent(
+        llm=llm,
+        tools=ToolRegistry([add]),
+        hooks=hooks,
+        policy=PolicyEngine([parse_rule("add", "ask")], ask_resolution="allow"),
+    )
+    out = await agent.run_messages([{"role": "user", "content": "1+2"}])
+    assert out.text == "3"  # ran
+    perm = next(kw for _, kw in events)
+    assert perm["behavior"] == "ask" and perm["allowed"] is True
+
+
 async def test_async_guardrail_is_awaited():
     # The protocol is async so a network-backed moderator can do I/O. Verify the
     # agent awaits it (a guardrail that yields control still blocks the input).

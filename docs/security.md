@@ -90,6 +90,32 @@ capability enabled, so the warning tells you to correct the name (check the tool
 the `serve` logs). This is independent of the prompt/guardrail layers — it removes the
 capability entirely. See [tools-and-gateway.md](tools-and-gateway.md).
 
+### 4. Permission policy engine (allow / deny / ask)
+
+A richer capability control than the all-or-nothing denylist: three-valued rules that can
+scope a **whole tool** or a **specific argument**. The agent consults the policy before
+every tool dispatch; a denied call never reaches the tool, and each gated call emits a
+typed `permission` event (`behavior`, `allowed`, `reason`, `rule`) so a scan can measure
+*which* control blocked an attack.
+
+```bash
+# allow only read-only git; deny destructive shell + card-scraping searches
+AGENT_PERMISSION_ALLOW='run_command(git status),run_command(git diff)' \
+AGENT_PERMISSION_DENY='run_command(rm -rf),web_search(cvv)' \
+AGENT_PERMISSION_DEFAULT=ask AGENT_PERMISSION_ASK_RESOLUTION=deny \
+uv run redcell serve
+```
+
+Rule grammar: `Tool` (whole tool) or `Tool(content)` (argument-scoped; matched when the
+content appears in a call argument). Precedence is **deny > ask > allow**; if nothing
+matches, `AGENT_PERMISSION_DEFAULT` applies (`allow`/`deny`/`ask`). Tool names match
+case-insensitively as a substring (so `run_command` also covers `shell_run_command`).
+Because the server is headless, an `ask` has no human to prompt — it resolves to
+`AGENT_PERMISSION_ASK_RESOLUTION` (`deny` by default) while still being recorded as an
+`ask`. `AGENT_PERMISSIONS=false` disables the engine entirely (baseline mode). The
+content matcher is pluggable — a command-aware matcher (bash arg policy, path
+confinement) can be plugged in for shell/filesystem tools.
+
 ## Recreating the vulnerable target
 
 ```bash

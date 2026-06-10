@@ -75,6 +75,20 @@ class Settings(BaseSettings):
     # always run serially, preserving the same-turn write+read race fix.
     mcp_readonly_tools: str = ""
 
+    # --- Permission policy engine (allow/deny/ask over tool calls) ---
+    # Master toggle: false = NullPolicy (everything allowed, for baselining).
+    permissions: bool = True
+    # Comma-separated rules, each "Tool" (whole tool) or "Tool(content)"
+    # (argument-scoped). deny beats ask beats allow. Rule content can't contain a
+    # comma via env. E.g. AGENT_PERMISSION_DENY=run_command(rm -rf),web_search(cvv)
+    permission_allow: str = ""
+    permission_deny: str = ""
+    permission_ask: str = ""
+    # Behavior when no rule matches (allow|deny|ask) and how an "ask" resolves
+    # with no human in the loop (deny|allow). Defaults keep current behavior.
+    permission_default: str = "allow"
+    permission_ask_resolution: str = "deny"
+
     # Stateful sessions: when a request carries this header (or a body
     # `session_id`/`sessionId`), the server remembers that conversation's history
     # server-side, so the client sends only the new turn. Used by promptfoo's

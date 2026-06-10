@@ -19,6 +19,7 @@ LIFECYCLE_EVENTS = (
     "tool_end",
     "max_iterations",
     "run_end",
+    "permission",
     "guardrail_input_block",
     "guardrail_output_redact",
     "guardrail_tool_redact",
