@@ -1,0 +1,61 @@
+# OpenShell gateway config — the control plane for redcell's execution sandbox.
+#
+# Adapted from NVIDIA's deploy/docker/gateway.toml with three changes that the
+# reference config gets wrong for this use case; each is called out inline below:
+#   1. gateway_jwt is configured (without it `sandbox create` refuses to run)
+#   2. the health server binds 0.0.0.0 (otherwise a container healthcheck can
+#      never reach it)
+#   3. the default sandbox image is redcell's own
+#
+# Mounted read-only at /etc/openshell/gateway.toml; see docker-compose.yml.
+
+[openshell]
+version = 1
+
+[openshell.gateway]
+# The docker driver adds a bridge listener on top of this, so sibling containers
+# on the compose network reach the gateway on :8080 regardless of what is set
+# here. Verified: the process reports `bind=0.0.0.0:8080`.
+bind_address = "127.0.0.1:8080"
+# NOT 127.0.0.1 — the reference config binds health to container-loopback, which
+# makes /healthz unreachable from the host and from other containers, so a
+# compose healthcheck against it can never pass.
+health_bind_address = "0.0.0.0:8081"
+log_level = "info"
+compute_drivers = ["docker"]
+disable_tls = true
+
+# Required: 0.0.92 rejects `sandbox create` on the docker driver with
+# "docker sandboxes require gateway JWT auth" unless this table is present.
+# The keys are Ed25519 and are NOT auto-generated -- the gateway exits if
+# signing_key_path is missing. The jwt-init service in docker-compose.yml
+# creates them on first run.
+[openshell.gateway.gateway_jwt]
+signing_key_path = "/var/lib/openshell/jwt/signing.pem"
+public_key_path = "/var/lib/openshell/jwt/public.pem"
+kid_path = "/var/lib/openshell/jwt/kid"
+gateway_id = "redcell"
+# 0 = the sandbox JWT never expires. Documented as acceptable only for local
+# single-operator Docker/Podman/VM gateways, which is exactly this topology.
+ttl_secs = 0
+
+# This gateway has no OIDC or mTLS in front of it and is published on loopback
+# only, so CLI callers are unauthenticated. Sandbox supervisors still
+# authenticate with the gateway-minted JWTs configured above.
+[openshell.gateway.auth]
+allow_unauthenticated_users = true
+
+[openshell.drivers.docker]
+# redcell's own sandbox image (sandbox/Dockerfile), built locally. Combined with
+# IfNotPresent below this is never pulled, which is also how we sidestep
+# NVIDIA/OpenShell#674 (pushing a built image into a containerized gateway
+# fails on macOS).
+default_image = "redcell-sandbox:local"
+supervisor_image = "ghcr.io/nvidia/openshell/supervisor:latest"
+image_pull_policy = "IfNotPresent"
+sandbox_namespace = "redcell"
+# Sandbox containers call back here. The driver rewrites the host to
+# host.openshell.internal and the port to the gateway's own 8080, so the gateway
+# MUST be published on host port 8080 (not a remapped one) or sandboxes hang in
+# Provisioning.
+grpc_endpoint = "http://host.openshell.internal:8080"

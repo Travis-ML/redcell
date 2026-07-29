@@ -1,0 +1,56 @@
+# OpenShell policy for redcell's execution sandbox.
+#
+# This file is the containment guarantee behind the `shell` and `filesystem`
+# MCP tools: whatever the agent is talked into running, it runs here, as an
+# unprivileged user, with no network, and it cannot write outside /sandbox.
+# The old Debian VM enforced this by convention (a hardened host, host-only
+# networking, snapshot-before-use); OpenShell enforces it with Landlock and
+# seccomp, from a file reviewed in the same commit as the agent code.
+#
+# Derived from OpenShell's built-in default (`openshell sandbox get <name>
+# --policy-only` on a sandbox created without --policy), with only the
+# differences noted inline. Straying further than that is risky: the entries here
+# are load-bearing in non-obvious ways. Dropping /proc or /dev/urandom, or
+# listing /bin and /sbin (Debian symlinks them into /usr, and naming them
+# directly breaks exec), makes every command fail with `spawn /bin/sh EACCES`.
+#
+# filesystem_policy and process are locked at sandbox creation. network_policies
+# is hot-reloadable, so widening egress for one scan does not require recreating
+# the sandbox:
+#     openshell policy set redcell-sbx --policy sandbox/policy.yaml --wait
+version: 1
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /etc
+    - /var/log
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+    # Not in the default. Node and the login shell read and write dotfiles here;
+    # without it every command logs "/home/sandbox/.profile: Permission denied"
+    # on stderr, which ends up interleaved with MCP diagnostics.
+    - /home/sandbox
+
+landlock:
+  # Fall back to whatever the running kernel supports rather than refusing to
+  # start, so the sandbox stays usable on hosts missing a Landlock ABI version.
+  compatibility: best_effort
+
+process:
+  # OpenShell's policy validator accepts only `sandbox` or a numeric uid/gid in
+  # [1000, 2000000000]; sandbox/Dockerfile renames the base image's uid-1000
+  # account to match.
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Deny-by-default egress: no entries means no allowed destinations. A scan that
+# genuinely needs to reach a target adds an endpoint here deliberately, which
+# makes granting network access an auditable diff rather than an assumption.
+network_policies: {}
