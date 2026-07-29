@@ -18,6 +18,19 @@ dependencies = [
     "pypdf>=4",
 ]
 
+[project.optional-dependencies]
+# Optional so a plain `uv sync` stays lean and importing redcell never needs the
+# OTel SDK. Enable with `uv sync --extra tracing` plus AGENT_TRACING=true; the
+# Docker image installs it unconditionally, so in the compose stack tracing is
+# one env flag.
+tracing = [
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
+    "opentelemetry-instrumentation-httpx>=0.51b0",
+]
+
 [project.scripts]
 redcell = "redcell.cli:app"
 

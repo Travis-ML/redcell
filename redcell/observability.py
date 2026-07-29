@@ -13,6 +13,7 @@ EventName = str  # see LIFECYCLE_EVENTS for the full set
 # Every event the agent emits. logging_hooks subscribes to all of them so the
 # guardrail and max_iterations events surface, not just the LLM/tool lifecycle.
 LIFECYCLE_EVENTS = (
+    "run_start",
     "llm_start",
     "llm_end",
     "tool_start",
@@ -63,6 +64,19 @@ def configure_logging(
         logging.CRITICAL if quiet_mcp_transport else num_level
     )
     renderer = structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
+
+    def add_trace_ids(_logger, _name, event_dict):
+        """Tag each line with the active trace/span id, when there is one.
+
+        This is what lets a log backend jump from a line to its trace and back.
+        The fields are omitted rather than zeroed when nothing is being traced, so
+        a filter on trace_id never matches untraced lines.
+        """
+        ids = _current_trace_ids()
+        if ids is not None:
+            event_dict["trace_id"], event_dict["span_id"] = ids
+        return event_dict
+
     # structlog renders via its own PrintLogger (not stdlib handlers); point it at
     # the file directly so a JSON run lands in a JSONL sink rather than stdout.
     sink = open(log_file, "a", encoding="utf-8") if log_file else None  # noqa: SIM115
@@ -72,9 +86,24 @@ def configure_logging(
         processors=[
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            add_trace_ids,
             renderer,
         ],
     )
+
+
+def _current_trace_ids() -> tuple[str, str] | None:
+    """Active ``(trace_id, span_id)``, or None when tracing is off or absent.
+
+    Imported lazily and failure-tolerant: logging must keep working with the OTel
+    extra uninstalled, which is the default.
+    """
+    try:
+        from .tracing import current_trace_ids
+
+        return current_trace_ids()
+    except Exception:
+        return None
 
 
 class Hooks:

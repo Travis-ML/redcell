@@ -1,0 +1,48 @@
+# Tempo and Loki, pre-wired so traces and logs cross-link.
+#
+# The correlation is the point of provisioning these rather than adding them by
+# hand: redcell's structlog processor stamps every line with the active trace_id,
+# and these two blocks are what turn that field into a clickable link in both
+# directions.
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      # Span -> logs: query Loki for lines carrying this span's trace id.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -1m
+        spanEndTimeShift: 1m
+        filterByTraceID: true
+        filterBySpanID: false
+        customQuery: true
+        query: '{service_name="redcell"} |= "$${__span.traceId}"'
+      nodeGraph:
+        enabled: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Log line -> trace: turn the trace_id field into a link into Tempo.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: "$${__value.raw}"
+          datasourceUid: tempo
+        # Fallback for lines where trace_id arrived inside the JSON body rather
+        # than as a label.
+        - name: TraceIDFromBody
+          matcherType: regex
+          matcherRegex: '"trace_id":\s*"(\w+)"'
+          url: "$${__value.raw}"
+          datasourceUid: tempo

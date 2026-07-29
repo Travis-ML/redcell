@@ -1,0 +1,84 @@
+# OpenTelemetry Collector — local backends (Tempo for traces, Loki for logs).
+#
+# This is the default config. To ship to Grafana Cloud instead, point the
+# collector at the other file:
+#     OTEL_CONFIG=./otel/collector-grafanacloud.yaml docker compose --profile observability up -d
+#
+# Two config files rather than one with conditional exporters, because the
+# Collector has no way to disable an exporter at runtime: an exporter present in a
+# pipeline with no backend behind it retries and logs on every batch forever.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # redcell's structlog JSONL sink, shared with the redcell container through a
+  # volume. Reusing the existing log file rather than adding an OTel logging
+  # handler in Python keeps one logging path instead of two, and the trace_id
+  # field structlog already injects is what joins a line to its trace.
+  file_log:
+    include: [/var/log/redcell/events.jsonl]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        parse_from: body
+        # Keep the raw line as the body too, so a malformed record is still
+        # visible rather than silently dropped.
+        on_error: send
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: "%Y-%m-%dT%H:%M:%S.%fZ"
+          layout_type: strptime
+        severity:
+          parse_from: attributes.level
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  # Bound memory so a burst of spans during a scan cannot push the collector into
+  # an OOM kill, which would lose the telemetry for exactly the interesting run.
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: local
+        action: upsert
+
+exporters:
+  # On by default so the stack is useful with no backend at all: spans show up in
+  # `docker compose logs otel-collector`.
+  debug:
+    verbosity: normal
+
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Loki 3.x accepts OTLP natively at /otlp; no separate loki exporter needed.
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, otlp_grpc/tempo]
+    logs:
+      receivers: [otlp, file_log]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, otlp_http/loki]

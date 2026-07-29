@@ -2,6 +2,20 @@
 # Aggregates the MCP servers below behind one endpoint on :3030 (UI on :15000).
 # You own this file: add policies / auth / observability here for the
 # AI-security tools (Garak, Promptfoo, llm-guard) to exercise.
+# AgentGateway can export its own OTLP traces, giving a proxy span per MCP tool
+# call — useful for separating agent-side latency from gateway-side. Left
+# commented out rather than enabled because the collector address differs between
+# host mode (127.0.0.1) and the compose stack (otel-collector), this file has no
+# env interpolation to paper over that, and with tracing off the gateway would
+# retry against a dead endpoint. Uncomment and set `host` to match your setup.
+#
+# frontendPolicies:
+#   tracing:
+#     host: 127.0.0.1:4317        # otel-collector:4317 in the compose stack
+#     protocol: grpc
+#     randomSampling: "1.0"
+#     resources:
+#       service.name: '"agentgateway"'
 binds:
 - port: 3030
   listeners:

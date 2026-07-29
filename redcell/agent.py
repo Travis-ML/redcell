@@ -156,6 +156,7 @@ class Agent:
         """Process one user input against the agent's memory, returning text."""
         run_id = correlation_id or _new_run_id()
         try:
+            self.hooks.emit("run_start", run_id=run_id)
             blocked = await self._blocked_input(user_input, run_id)
             if blocked is not None:
                 return blocked.text or ""
@@ -186,6 +187,7 @@ class Agent:
         """
         run_id = correlation_id or _new_run_id()
         try:
+            self.hooks.emit("run_start", run_id=run_id)
             blocked = await self._blocked_input(self._latest_user_text(incoming), run_id)
             if blocked is not None:
                 return blocked
@@ -216,6 +218,7 @@ class Agent:
         """
         run_id = correlation_id or _new_run_id()
         try:
+            self.hooks.emit("run_start", run_id=run_id)
             blocked = await self._blocked_input(self._latest_user_text(messages), run_id)
             if blocked is not None:
                 return blocked

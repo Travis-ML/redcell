@@ -1,0 +1,85 @@
+# OpenTelemetry Collector — Grafana Cloud.
+#
+# Select it with:
+#     OTEL_CONFIG=./otel/collector-grafanacloud.yaml \
+#       docker compose --profile observability up -d otel-collector
+#
+# Required in .env:
+#     GRAFANA_CLOUD_OTLP_ENDPOINT=https://otlp-gateway-<region>.grafana.net/otlp
+#     GRAFANA_CLOUD_OTLP_AUTH=<base64 of "<instanceID>:<token>">
+#
+# Build the auth value with:
+#     printf '%s' '<instanceID>:<token>' | base64
+#
+# One endpoint takes traces, logs and metrics; the signal path (/v1/traces etc.)
+# is appended automatically.
+#
+# Note the `:-` defaults on both variables. The Collector refuses to start when a
+# referenced env var is unset with no default, so without them `docker compose up`
+# would fail for anyone who has not filled in credentials — the failure would look
+# like a broken stack rather than a missing setting.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  file_log:
+    include: [/var/log/redcell/events.jsonl]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        parse_from: body
+        on_error: send
+        timestamp:
+          parse_from: attributes.timestamp
+          layout: "%Y-%m-%dT%H:%M:%S.%fZ"
+          layout_type: strptime
+        severity:
+          parse_from: attributes.level
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: local
+        action: upsert
+
+exporters:
+  debug:
+    verbosity: normal
+  otlp_http/grafanacloud:
+    endpoint: ${env:GRAFANA_CLOUD_OTLP_ENDPOINT:-http://localhost:4318}
+    headers:
+      authorization: Basic ${env:GRAFANA_CLOUD_OTLP_AUTH:-unset}
+    # A scan can burst; queue rather than drop, and keep retrying a flaky uplink.
+    sending_queue:
+      enabled: true
+      queue_size: 2000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+
+service:
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, otlp_http/grafanacloud]
+    logs:
+      receivers: [otlp, file_log]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug, otlp_http/grafanacloud]
