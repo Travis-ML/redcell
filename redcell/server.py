@@ -37,6 +37,7 @@ def create_app(
     gateway: object | None = None,
     mcp_manager: object | None = None,
     qdrant: object | None = None,
+    openshell: object | None = None,
     post_startup: Callable[[], Awaitable[None]] | None = None,
     session_store: SessionStore | None = None,
     session_header: str = "x-redcell-session",
@@ -59,6 +60,9 @@ def create_app(
         qdrant: optional RAG-store supervisor with async ``start()``/``stop()``;
             started before the gateway so the gateway's ``rag`` target has a store
             to connect to.
+        openshell: optional execution-sandbox supervisor with async
+            ``start()``/``stop()``; started before the gateway so the gateway's
+            ``shell``/``filesystem`` targets have a sandbox to SSH into.
         post_startup: optional coroutine run once after the gateway/MCP manager are
             ready (e.g. ingesting documents into the RAG store). Runs as a background
             task so it never blocks the server binding; cancelled on shutdown.
@@ -72,13 +76,18 @@ def create_app(
     async def lifespan(_app: FastAPI):
         # AsyncExitStack guarantees teardown even if a later startup step fails:
         # each stop is registered immediately after its start, so a failed later
-        # step can't leak an earlier one. Qdrant comes up first so the gateway's
-        # `rag` target finds a store; teardown unwinds LIFO (manager exits, then
-        # gateway stops, then qdrant stops) — the reverse of startup.
+        # step can't leak an earlier one. Both backing services come up before the
+        # gateway, because the gateway spawns MCP servers that connect straight
+        # out to them: `rag` needs a store, and `shell`/`filesystem` are launched
+        # over SSH into the sandbox, so a missing sandbox means those targets
+        # contribute no tools. Teardown unwinds LIFO — the reverse of startup.
         async with AsyncExitStack() as stack:
             if qdrant is not None:
                 await qdrant.start()
                 stack.push_async_callback(qdrant.stop)
+            if openshell is not None:
+                await openshell.start()
+                stack.push_async_callback(openshell.stop)
             if gateway is not None:
                 await gateway.start()
                 stack.push_async_callback(gateway.stop)

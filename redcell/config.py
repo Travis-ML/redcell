@@ -142,9 +142,31 @@ class Settings(BaseSettings):
     gateway_autostart: bool = True
     gateway_ready_timeout: float = 30.0
 
-    # Execution VM: the `shell`/`filesystem` tools run on a Debian VM reached via
-    # this SSH host alias (see agentgateway/config.yaml). At startup `serve` probes
-    # it and reports whether those tools will work. Empty disables the probe; set
-    # it to match the alias if you changed it in the gateway config.
-    exec_vm_host: str = "debian-agent"
-    exec_vm_timeout: float = 5.0
+    # Execution sandbox: the `shell`/`filesystem` MCP servers run inside an
+    # OpenShell sandbox, never on the redcell host. `serve` makes sure the sandbox
+    # exists and writes the SSH config the gateway launches those servers through
+    # (see redcell/openshell.py and sandbox/README.md). Degrades gracefully: if
+    # the gateway is down or the CLI is missing, those two tools just error.
+    openshell_autostart: bool = True
+    openshell_bin: str = "openshell"
+    # Control-plane URL. Must be published on port 8080 specifically — the docker
+    # driver tells sandboxes to call back on the gateway's own port, so remapping
+    # it leaves them stuck in Provisioning.
+    openshell_gateway_url: str = "http://127.0.0.1:8080"
+    # Health lives on its own port, not the control-plane one.
+    openshell_health_url: str = "http://127.0.0.1:8081/healthz"
+    openshell_gateway_name: str = "redcell"
+    openshell_sandbox: str = "redcell-sbx"
+    openshell_workspace: str = "default"
+    # Built locally by `docker build -t redcell-sandbox:local sandbox/`; the
+    # gateway's IfNotPresent pull policy means it is used as-is, never pulled.
+    openshell_image: str = "redcell-sandbox:local"
+    openshell_policy_path: str = "sandbox/policy.yaml"
+    # Generated at startup and referenced by `ssh -F` in agentgateway/config.yaml.
+    openshell_ssh_config_path: str = ".redcell/openshell_ssh_config"
+    openshell_ready_timeout: float = 60.0
+    # Generous: a cold first run pulls the supervisor and sandbox images.
+    openshell_create_timeout: float = 600.0
+    # Reusing the sandbox across restarts skips image pulls and keeps /sandbox
+    # contents; set true for a clean sandbox every run.
+    openshell_delete_on_exit: bool = False

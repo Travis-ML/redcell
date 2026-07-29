@@ -14,12 +14,14 @@ from . import __version__
 from .accounting import CostAccountant
 from .agent import Agent
 from .config import Settings
-from .gateway import GatewaySupervisor, probe_ssh_host
+from .gateway import GatewaySupervisor
 from .guardrails import make_guardrail
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
+from .openshell import OpenShellSupervisor
 from .permissions import NullPolicy, Policy, PolicyEngine, Rule, parse_rule
+from .preflight import check_runtimes, parse_target_names, target_tool_counts
 from .prompts import build_system_prompt
 from .qdrant import QdrantSupervisor
 from .rag.corpus import default_corpus_path, load_corpus
@@ -166,6 +168,40 @@ def version() -> None:
 
 
 @app.command()
+def doctor() -> None:
+    """Check the external runtimes the MCP stack needs (run before `serve`)."""
+    settings = Settings()
+    typer.echo("redcell doctor — MCP runtime prerequisites")
+    ok_all = True
+    for c in check_runtimes(gateway_bin=settings.gateway_bin, openshell_bin=settings.openshell_bin):
+        ok_all = ok_all and c.ok
+        line = f"  {'✓' if c.ok else '✗'} {c.name}"
+        if not c.ok:
+            line += f"  — {c.hint}"
+        typer.echo(line)
+    ok, detail = _probe_openshell_gateway(settings)
+    ok_all = ok_all and ok
+    typer.echo(
+        f"  {'✓' if ok else '✗'} OpenShell gateway ({settings.openshell_health_url}) — {detail}"
+    )
+    typer.echo("  per-target tool health is reported when you run `redcell serve`.")
+    raise typer.Exit(code=0 if ok_all else 1)
+
+
+def _probe_openshell_gateway(settings: Settings) -> tuple[bool, str]:
+    """Check the OpenShell gateway answers its health endpoint. Never raises."""
+    import httpx
+
+    try:
+        resp = httpx.get(settings.openshell_health_url, timeout=5.0)
+    except Exception as exc:
+        return False, f"unreachable ({type(exc).__name__}) — is the stack up?"
+    if resp.status_code == 200:
+        return True, "healthy"
+    return False, f"HTTP {resp.status_code}"
+
+
+@app.command()
 def serve(
     host: str = typer.Option(None, "--host", help="Override AGENT_SERVER_HOST."),
     port: int = typer.Option(None, "--port", help="Override AGENT_SERVER_PORT."),
@@ -266,6 +302,10 @@ def serve(
             ready_timeout=settings.gateway_ready_timeout,
         )
 
+    openshell = None
+    if settings.openshell_autostart:
+        openshell = _make_openshell(settings)
+
     qdrant = None
     if settings.qdrant_autostart:
         qdrant = QdrantSupervisor(
@@ -282,10 +322,12 @@ def serve(
         ttl_seconds=settings.session_ttl_seconds,
     )
 
-    post_startup = None
-    if settings.docs_autoload and settings.docs_dir:
-
-        async def post_startup() -> None:
+    async def post_startup() -> None:
+        # Runs after the gateway/MCP manager are up: first report which targets
+        # actually produced tools (a down target = its MCP server failed to
+        # start), then ingest documents if enabled.
+        _report_target_health(manager.tools(), settings.gateway_config_path)
+        if settings.docs_autoload and settings.docs_dir:
             try:
                 await ingest_documents(
                     manager.tools(),
@@ -304,6 +346,7 @@ def serve(
         gateway=gateway,
         mcp_manager=manager,
         qdrant=qdrant,
+        openshell=openshell,
         post_startup=post_startup,
         session_store=session_store,
         session_header=settings.session_header,
@@ -325,26 +368,78 @@ def serve(
             f"  qdrant:  docker compose up -d {settings.qdrant_service} "
             f"(RAG store on :{settings.qdrant_port})"
         )
-    if post_startup is not None:
+    if openshell is not None:
+        typer.echo(
+            f"  sandbox: OpenShell '{settings.openshell_sandbox}' "
+            f"(shell/filesystem run there, not on this host)"
+        )
+    if settings.docs_autoload and settings.docs_dir:
         typer.echo(f"  docs:    ingesting PDFs from '{settings.docs_dir}/' into the RAG store")
-    _report_exec_vm(settings, denied)
+    _report_preflight(settings)
     uvicorn.run(api, host=bind_host, port=bind_port)
 
 
-def _report_exec_vm(settings: Settings, denied: set[str]) -> None:
-    """Probe the execution VM and print whether shell/filesystem will work."""
-    if not settings.exec_vm_host:
+def _make_openshell(settings: Settings) -> OpenShellSupervisor:
+    """Build the execution-sandbox supervisor from settings."""
+    return OpenShellSupervisor(
+        bin=settings.openshell_bin,
+        gateway_url=settings.openshell_gateway_url,
+        health_url=settings.openshell_health_url,
+        gateway_name=settings.openshell_gateway_name,
+        sandbox=settings.openshell_sandbox,
+        workspace=settings.openshell_workspace,
+        image=settings.openshell_image,
+        policy_path=settings.openshell_policy_path,
+        ssh_config_path=settings.openshell_ssh_config_path,
+        ready_timeout=settings.openshell_ready_timeout,
+        create_timeout=settings.openshell_create_timeout,
+        delete_on_exit=settings.openshell_delete_on_exit,
+    )
+
+
+def _report_preflight(settings: Settings) -> None:
+    """Print which external MCP runtimes are installed (✓/✗ with install hints).
+
+    Only checks what the current config will actually use (gateway/Docker), so a
+    user who disabled a piece isn't nagged about its runtime.
+    """
+    checks = check_runtimes(
+        gateway_bin=settings.gateway_bin,
+        openshell_bin=settings.openshell_bin,
+        check_gateway=settings.gateway_autostart,
+        check_node=settings.gateway_autostart,
+        check_uv=settings.gateway_autostart,
+        check_docker=settings.qdrant_autostart,
+        check_openshell=settings.openshell_autostart,
+        check_ssh=settings.openshell_autostart,
+    )
+    if not checks:
         return
-    if {"shell", "filesystem"} <= denied:
-        typer.echo("  exec VM: shell/filesystem denied via denylist — VM not needed")
+    marks = "  ".join(f"{c.name} {'✓' if c.ok else '✗'}" for c in checks)
+    typer.echo(f"  preflight: {marks}")
+    for c in checks:
+        if not c.ok:
+            typer.echo(f"             ✗ {c.name}: {c.hint}")
+
+
+def _report_target_health(tools: list[Tool], config_path: str) -> None:
+    """Log how many tools each gateway target produced (0 = that server is down)."""
+    log = logging.getLogger("redcell.cli")
+    names = [t.name for t in tools]
+    targets = parse_target_names(config_path)
+    if not targets:
+        log.info("gateway: %d MCP tool(s) discovered", len(names))
         return
-    ok, detail = probe_ssh_host(settings.exec_vm_host, timeout=settings.exec_vm_timeout)
-    if ok:
-        typer.echo(f"  exec VM: '{settings.exec_vm_host}' reachable — shell/filesystem enabled")
-    else:
-        typer.echo(f"  exec VM: '{settings.exec_vm_host}' NOT reachable ({detail})")
-        typer.echo("           shell/filesystem will error until set up (other tools still work)")
-        typer.echo("           setup: docs/tools-and-gateway.md#setting-up-the-execution-vm")
+    counts = target_tool_counts(names, targets)
+    summary = "  ".join(f"{t}:{n}{' ✗' if n == 0 else ''}" for t, n in counts.items())
+    log.info("gateway targets — %s", summary)
+    down = [t for t, n in counts.items() if n == 0]
+    if down:
+        log.warning(
+            "gateway target(s) produced no tools (MCP server failed to start — missing "
+            "runtime or unreachable VM?): %s",
+            ", ".join(down),
+        )
 
 
 @app.command()
