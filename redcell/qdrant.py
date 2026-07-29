@@ -31,6 +31,12 @@ class QdrantSupervisor:
         port: port the Qdrant REST API binds.
         ready_timeout: seconds to wait for the port to accept connections.
         stop_on_exit: if True, ``docker compose stop`` the service on shutdown.
+        manage: if False, only wait for readiness and never shell out to Docker.
+            That is the mode to use when redcell itself runs in the compose stack:
+            Compose already starts Qdrant and gates redcell on its healthcheck,
+            and the redcell container has no Docker socket (and should not get
+            one). The readiness wait is still worth keeping — it costs nothing and
+            makes a misconfigured host or port an explicit log line.
     """
 
     def __init__(
@@ -42,6 +48,7 @@ class QdrantSupervisor:
         port: int,
         ready_timeout: float = 30.0,
         stop_on_exit: bool = False,
+        manage: bool = True,
     ) -> None:
         self._compose_file = compose_file
         self._service = service
@@ -49,10 +56,11 @@ class QdrantSupervisor:
         self._port = port
         self._ready_timeout = ready_timeout
         self._stop_on_exit = stop_on_exit
+        self._manage = manage
         self.available = False
 
     async def start(self) -> None:
-        if not await self._compose("up", "-d", self._service):
+        if self._manage and not await self._compose("up", "-d", self._service):
             return  # docker missing or compose failed; degrade to no-RAG
         if await self._wait_ready():
             self.available = True
@@ -67,7 +75,7 @@ class QdrantSupervisor:
 
     async def stop(self) -> None:
         self.available = False
-        if self._stop_on_exit:
+        if self._stop_on_exit and self._manage:
             await self._compose("stop", self._service)
 
     async def _compose(self, *args: str) -> bool:

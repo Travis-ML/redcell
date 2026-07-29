@@ -32,6 +32,7 @@ from .server import create_app
 from .sessions import SessionStore
 from .toolpolicy import make_content_matcher
 from .tools import Tool, ToolRegistry, tool
+from .tracing import TracingHooks, instrument_app, setup_tracing
 
 
 def _denied_mcp_tools(settings: Settings) -> set[str]:
@@ -226,6 +227,11 @@ def serve(
     hooks = logging_hooks()
     if settings.scorecard:
         CostAccountant().attach(hooks)
+    # Attach tracing to the same shared Hooks as the accountant, so spans span the
+    # whole scan rather than one request.
+    tracing_on = setup_tracing(settings)
+    if tracing_on:
+        TracingHooks().attach(hooks)
 
     def build_agent() -> Agent:
         tools = default_tools(settings)  # builtins registered first — they win collisions
@@ -315,6 +321,7 @@ def serve(
             port=settings.qdrant_port,
             ready_timeout=settings.qdrant_ready_timeout,
             stop_on_exit=settings.qdrant_stop_on_exit,
+            manage=settings.qdrant_manage,
         )
 
     session_store = SessionStore(
@@ -351,6 +358,8 @@ def serve(
         session_store=session_store,
         session_header=settings.session_header,
     )
+    if tracing_on:
+        instrument_app(api)
     bind_host = host or settings.server_host
     bind_port = port or settings.server_port
     typer.echo(f"Serving agent ({settings.model}) as model '{settings.model_id}'.")
@@ -364,10 +373,12 @@ def serve(
     if gateway is not None:
         typer.echo(f"  gateway: launching '{settings.gateway_bin}' on :{settings.gateway_port}")
     if qdrant is not None:
-        typer.echo(
-            f"  qdrant:  docker compose up -d {settings.qdrant_service} "
-            f"(RAG store on :{settings.qdrant_port})"
+        action = (
+            f"docker compose up -d {settings.qdrant_service}"
+            if settings.qdrant_manage
+            else f"waiting for {settings.qdrant_host}"
         )
+        typer.echo(f"  qdrant:  {action} (RAG store on :{settings.qdrant_port})")
     if openshell is not None:
         typer.echo(
             f"  sandbox: OpenShell '{settings.openshell_sandbox}' "
@@ -375,6 +386,10 @@ def serve(
         )
     if settings.docs_autoload and settings.docs_dir:
         typer.echo(f"  docs:    ingesting PDFs from '{settings.docs_dir}/' into the RAG store")
+    if tracing_on:
+        typer.echo(
+            f"  tracing: OTLP -> {settings.tracing_endpoint} (spans include prompt/tool content)"
+        )
     _report_preflight(settings)
     uvicorn.run(api, host=bind_host, port=bind_port)
 
@@ -409,7 +424,7 @@ def _report_preflight(settings: Settings) -> None:
         check_gateway=settings.gateway_autostart,
         check_node=settings.gateway_autostart,
         check_uv=settings.gateway_autostart,
-        check_docker=settings.qdrant_autostart,
+        check_docker=settings.qdrant_autostart and settings.qdrant_manage,
         check_openshell=settings.openshell_autostart,
         check_ssh=settings.openshell_autostart,
     )

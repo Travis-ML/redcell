@@ -51,6 +51,26 @@ class Settings(BaseSettings):
     # cost/activity report. Pricing lives in redcell/pricing.py.
     scorecard: bool = True
 
+    # --- OpenTelemetry tracing (opt-in) ---
+    # Emits one trace per request: the HTTP span at the root, `agent.run` beneath
+    # it, then a child span per LLM call and tool call, with guardrail trips,
+    # permission decisions and compaction as span events. Needs the optional
+    # dependency group: `uv sync --extra tracing`.
+    #
+    # Spans carry full prompt, completion and tool-argument content — that is the
+    # point for red-team forensics, but it means a trace backend holds a LESS
+    # filtered record than the API response does, because the output guardrail
+    # redacts what reaches the client, not what reached the span. See
+    # docs/observability.md.
+    tracing: bool = False
+    tracing_endpoint: str = "http://127.0.0.1:4317"
+    tracing_protocol: str = "grpc"  # grpc | http
+    tracing_service_name: str = "redcell"
+    tracing_sample_ratio: float = 1.0
+    # FastAPI + httpx auto-instrumentation: server spans per request, client spans
+    # for the model endpoint, SearXNG, and the MCP session.
+    tracing_instrument_http: bool = True
+
     # `redcell serve` — the OpenAI-compatible HTTP server.
     server_host: str = "0.0.0.0"
     server_port: int = 8800
@@ -110,6 +130,10 @@ class Settings(BaseSettings):
     # same way it launches the gateway, so the gateway's `rag` target has a store
     # to connect to. Degrades gracefully if Docker is unavailable.
     qdrant_autostart: bool = True
+    # False = wait for Qdrant to be reachable but never shell out to Docker. Set
+    # this in the compose stack, where Compose starts Qdrant and gates redcell on
+    # its healthcheck, and the redcell container has no Docker socket.
+    qdrant_manage: bool = True
     qdrant_compose_file: str = "docker-compose.yml"
     qdrant_service: str = "qdrant"
     # Host/port of the Qdrant REST API (used for the readiness probe).

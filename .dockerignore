@@ -1,0 +1,29 @@
+# Keep the build context small and keep host state out of the image.
+.git
+.gitignore
+.venv
+.env
+.redcell
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+.DS_Store
+
+# Not needed at runtime; excluded so editing them does not invalidate the
+# dependency layers.
+tests
+docs
+eval
+examples
+
+# Mounted as volumes rather than copied, so a large corpus never lands in the
+# image.
+documents
+
+# The stack's own definitions: the container does not orchestrate itself.
+docker-compose.yml
+Dockerfile
+searxng
+openshell

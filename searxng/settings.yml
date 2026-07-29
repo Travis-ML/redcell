@@ -1,0 +1,31 @@
+# SearXNG settings for redcell's `web_search` builtin.
+#
+# `use_default_settings: true` merges this on top of the image's built-in
+# defaults, so only the deviations live here. Do not vendor the full upstream
+# settings.yml — it is ~68KB and every SearXNG upgrade turns it into a merge
+# conflict.
+#
+# The secret key and the Valkey URL are supplied by SEARXNG_SECRET and
+# SEARXNG_VALKEY_URL in docker-compose.yml; both override what this file says.
+use_default_settings: true
+
+general:
+  instance_name: "redcell"
+  debug: false
+
+search:
+  # The reason this file exists. JSON output is OFF by default in current
+  # SearXNG, and redcell/searxng.py requests `format=json` — without this the
+  # web_search tool gets an HTML error page and every search returns an error
+  # string.
+  formats:
+    - json
+  safe_search: 0
+  autocomplete: ""
+
+server:
+  # This instance is reachable only from the compose network and localhost, and
+  # its one client is the agent, which can legitimately issue bursts of searches
+  # during a scan. The rate limiter would throttle exactly that.
+  limiter: false
+  public_instance: false
