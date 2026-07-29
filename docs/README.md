@@ -15,7 +15,7 @@ This folder is the full reference. Start with whichever page matches your task.
 | ---- | -------------- |
 | [Architecture](architecture.md) | Components, the request lifecycle, the agent tool-use loop, design principles |
 | [Configuration reference](configuration.md) | Every `AGENT_*` setting — type, default, meaning |
-| [CLI reference](cli.md) | `redcell serve`, `chat`, `rag-seed`, `version` |
+| [CLI reference](cli.md) | `redcell serve`, `chat`, `rag-seed`, `doctor`, `version` |
 | [Server & API](server-api.md) | The OpenAI-compatible endpoints, auth, streaming, sessions |
 | [Sessions](server-api.md#sessions) | Stateful vs stateless, session ids, promptfoo wiring |
 | [Security controls](security.md) | Safety prompt, guardrails, tool denylist, threat model, eval workflow |

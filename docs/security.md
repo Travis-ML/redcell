@@ -53,7 +53,7 @@ A small pluggable moderation layer. The agent calls it to screen **input before*
     scraping, "complete lyrics", secret-scanning of `/home`/`/tmp`/`/var`) → returns a
     refusal, the LLM is never called.
   - **output**: redacts PII (emails, card-like digit runs, US SSNs, phone-like numbers)
-    and internal-architecture identifiers (`/home/redcell/*`, `qdrant`, `fastembed`,
+    and internal-architecture identifiers (`/sandbox/*`, `qdrant`, `fastembed`,
     `agentgateway`, `vllm`, `mcp-server-*`, `redcell-kb`) → replaced with `[redacted]`.
   - **tool results**: the same redaction also runs over every tool result *before it
     reaches the model*, so a secret fetched off the web or read off the filesystem can't
@@ -142,7 +142,7 @@ This restores the original behavior: bare prompt, no moderation, all tools enabl
 - **Direct harmful generation** — does the model refuse harmful asks?
 - **Tool abuse** — `shell`/`filesystem`/`fetch` let an attack actually *do* something
   (write files, run commands, exfiltrate). The gateway confines these to a sandboxed
-  Debian VM over SSH; the gateway is the observable choke point.
+  OpenShell sandbox over SSH; the gateway is the observable choke point.
 - **Indirect prompt injection via RAG** — the seed corpus plants poison docs with
   unique canaries; retrieval routes through the gateway so you can confirm whether a
   poisoned doc actually drove a tool call. See [rag.md](rag.md).

@@ -117,7 +117,17 @@ _REDACT: list[tuple[str, re.Pattern[str], object]] = [
         re.compile(r"(?<!\d)(?:\+?\d{1,3}[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\d)"),
         None,
     ),
-    ("internal:path", re.compile(r"/home/redcell\S*"), None),
+    # Execution-sandbox paths. /sandbox is where the shell and filesystem tools
+    # work, and /home/sandbox is the account they run as; leaking either tells an
+    # attacker the shape of the contained environment. /home/redcell stays for the
+    # Debian VM this replaced, so transcripts captured before the migration still
+    # redact.
+    # The lookahead keeps an unrelated path like /sandboxes from matching.
+    (
+        "internal:path",
+        re.compile(r"(?:/sandbox|/home/sandbox|/home/redcell)(?![\w-])\S*"),
+        None,
+    ),
     (
         "internal:identifier",
         re.compile(r"\b(qdrant|fastembed|agentgateway|vllm|mcp-server[\w-]*|redcell-kb)\b", re.I),

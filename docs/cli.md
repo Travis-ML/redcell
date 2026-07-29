@@ -6,6 +6,7 @@ The `redcell` command is a [Typer](https://typer.tiangolo.com/) app
 
 ```
 redcell version          # print the installed version
+redcell doctor           # check the external MCP runtimes are installed
 redcell chat             # interactive REPL against a configured model
 redcell serve            # OpenAI-compatible HTTP server (+ AgentGateway)
 redcell rag-seed         # load the RAG corpus into Qdrant via the gateway
@@ -19,6 +20,31 @@ All commands read configuration from env / `.env` (see
 ## `redcell version`
 
 Prints the package version (`redcell.__version__`). No options.
+
+---
+
+## `redcell doctor`
+
+Checks that the external runtimes the MCP stack needs are installed, so you can fix your
+setup *before* starting the server. No options.
+
+```bash
+uv run redcell doctor
+#   redcell doctor — MCP runtime prerequisites
+#     ✓ agentgateway
+#     ✓ npx
+#     ✗ uvx  — install uv — runs the fetch + qdrant MCP servers (astral.sh/uv)
+#     ✓ docker
+#     ✓ openshell
+#     ✓ ssh
+#     ✓ OpenShell gateway (http://127.0.0.1:8081/healthz) — healthy
+```
+
+Checks `agentgateway`, `npx` (Playwright), `uvx` (Fetch + RAG servers), `docker` (Qdrant),
+`openshell` and `ssh` (the execution sandbox), and probes the OpenShell gateway's health
+endpoint (`AGENT_OPENSHELL_HEALTH_URL`). Exits non-zero if anything is
+missing, so it's usable in CI/setup scripts. Per-target *tool* health (which MCP servers
+actually produced tools) is reported separately by `serve` once the gateway connects.
 
 ---
 
@@ -66,9 +92,19 @@ Serving agent (anthropic/claude-opus-4-8) as model 'redcell'.
   gateway: launching 'agentgateway' on :3030
   qdrant:  docker compose up -d qdrant (RAG store on :6333)
   docs:    ingesting PDFs from 'documents/' into the RAG store
+  sandbox: OpenShell 'redcell-sbx' (shell/filesystem run there, not on this host)
+  preflight: agentgateway ✓  npx ✓  uvx ✓  docker ✓  openshell ✓  ssh ✓
 ```
 
 If `AGENT_MCP_TOOL_DENYLIST` is set, the denied tool names are printed too.
+
+**Preflight & target health:** `serve` prints a **preflight** line (are the external
+runtimes — `agentgateway`, `npx`, `uvx`, `docker` — on PATH, with a fix hint for any that
+aren't) and, once the gateway connects, logs **per-target tool health** —
+`gateway targets — playwright:21  fetch:1  rag:2  filesystem:8  shell:0 ✗` — so a target
+whose MCP server failed to start (missing runtime, unreachable VM) shows as `0` instead of
+silently vanishing. Run [`redcell doctor`](#redcell-doctor) to check the same runtimes
+before starting.
 
 **Gateway behavior:** controlled by `AGENT_GATEWAY_*` (see
 [configuration.md](configuration.md)). If the binary is missing or never becomes

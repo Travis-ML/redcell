@@ -14,6 +14,7 @@ touching the agent loop.
 | `redcell/mcp.py` | `MCPManager` — discovers tools from one upstream MCP endpoint (AgentGateway) and wraps each as a local `Tool`. |
 | `redcell/gateway.py` | `GatewaySupervisor` — spawns and health-checks the AgentGateway child process. |
 | `redcell/qdrant.py` | `QdrantSupervisor` — brings the RAG store up via `docker compose` and health-checks its port. |
+| `redcell/preflight.py` | Startup checks: external runtimes on PATH + per-gateway-target tool health (`redcell doctor`). |
 | `redcell/server.py` | FastAPI app exposing the OpenAI-compatible `/v1/*` endpoints. |
 | `redcell/sessions.py` | `SessionStore` — server-side conversation memory keyed by session id (LRU + TTL). |
 | `redcell/memory.py` | `Memory` interface + `InMemoryStore` (per-conversation message history). |

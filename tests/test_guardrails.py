@@ -62,6 +62,23 @@ async def test_redacts_internal_architecture_from_output():
     assert "mcp-server-qdrant" not in out
 
 
+async def test_redacts_openshell_sandbox_paths():
+    # The execution sandbox moved from the Debian VM's /home/redcell/sandbox to
+    # OpenShell's /sandbox, so the redaction has to follow it or the new path
+    # leaks in every shell tool result.
+    g = PatternGuardrail()
+    out = (await g.check_output("wrote /sandbox/proof as HOME=/home/sandbox/.npm")).text
+    assert "/sandbox/proof" not in out
+    assert "/home/sandbox" not in out
+    assert REDACTED in out
+
+
+async def test_unrelated_sandbox_prefixed_path_is_not_redacted():
+    g = PatternGuardrail()
+    out = (await g.check_output("see the /sandboxes-archive listing")).text
+    assert "/sandboxes-archive" in out
+
+
 async def test_card_redaction_is_luhn_gated():
     g = PatternGuardrail()
     # A Luhn-valid test card is redacted...

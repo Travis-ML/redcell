@@ -107,8 +107,19 @@ agent to its aggregated MCP endpoint. See [tools-and-gateway.md](tools-and-gatew
 | `AGENT_GATEWAY_URL` | str | `http://127.0.0.1:3030/mcp` | The aggregated MCP endpoint the agent connects to. Tune the path (root vs `/mcp`) to match your gateway config. |
 | `AGENT_GATEWAY_AUTOSTART` | bool | `true` | If false, `serve` does not spawn the gateway (run it yourself elsewhere). |
 | `AGENT_GATEWAY_READY_TIMEOUT` | float | `30.0` | Seconds to wait for the gateway port to accept connections before continuing without it. |
-| `AGENT_EXEC_VM_HOST` | str | `debian-agent` | SSH host alias for the code-execution VM (`shell`/`filesystem`). `serve` probes it at startup and reports whether those tools will work. Empty disables the probe; change it to match if you renamed the alias in the gateway config. |
-| `AGENT_EXEC_VM_TIMEOUT` | float | `5.0` | SSH connect timeout (seconds) for the startup probe. |
+| `AGENT_OPENSHELL_AUTOSTART` | bool | `true` | Create/reuse the OpenShell execution sandbox at `serve` startup and write the SSH config the gateway launches `shell`/`filesystem` through. False leaves both tools erroring. |
+| `AGENT_OPENSHELL_BIN` | str | `openshell` | The OpenShell CLI executable. |
+| `AGENT_OPENSHELL_GATEWAY_URL` | str | `http://127.0.0.1:8080` | OpenShell control-plane URL. Must be published on port 8080 specifically — the docker driver tells sandboxes to call back on the gateway's own port, so remapping it hangs them in `Provisioning`. |
+| `AGENT_OPENSHELL_HEALTH_URL` | str | `http://127.0.0.1:8081/healthz` | Readiness probe. A separate port from the control plane. |
+| `AGENT_OPENSHELL_GATEWAY_NAME` | str | `redcell` | Local name the gateway is registered under. |
+| `AGENT_OPENSHELL_SANDBOX` | str | `redcell-sbx` | Sandbox name to create or reuse. |
+| `AGENT_OPENSHELL_WORKSPACE` | str | `default` | OpenShell workspace. Part of the generated SSH host alias. |
+| `AGENT_OPENSHELL_IMAGE` | str | `redcell-sandbox:local` | Sandbox image; build with `docker build -t redcell-sandbox:local sandbox/`. |
+| `AGENT_OPENSHELL_POLICY_PATH` | str | `sandbox/policy.yaml` | Policy applied at sandbox creation. |
+| `AGENT_OPENSHELL_SSH_CONFIG_PATH` | str | `.redcell/openshell_ssh_config` | Where the generated SSH config is written; `agentgateway/config.yaml` points `ssh -F` at it. |
+| `AGENT_OPENSHELL_READY_TIMEOUT` | float | `60.0` | Seconds to wait for the gateway health endpoint. |
+| `AGENT_OPENSHELL_CREATE_TIMEOUT` | float | `600.0` | Seconds allowed for sandbox creation. Generous because a cold first run pulls images. |
+| `AGENT_OPENSHELL_DELETE_ON_EXIT` | bool | `false` | Delete the sandbox on shutdown. Reusing it skips image pulls and keeps `/sandbox`. |
 
 > The field name is `gateway_config_path` but the env var is `AGENT_GATEWAY_CONFIG`
 > (the `.env.example` and this table are the source of truth for the env name).

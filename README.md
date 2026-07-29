@@ -43,6 +43,34 @@ cp .env.example .env      # then set AGENT_MODEL + keys/endpoint
 uv run redcell chat
 ```
 
+## What you need for full functionality
+
+redcell runs with **just a model configured** — chat and the OpenAI-compatible API work
+with nothing else. Every additional capability needs one external runtime in place.
+redcell degrades gracefully when one is missing (that tool/target simply goes away and is
+reported, never silently wrong), so add only what you want to exercise.
+
+**Check your setup any time:** `uv run redcell doctor` reports each runtime ✓/✗ with a fix
+hint, and `redcell serve` prints per-target tool health at startup (a target with `0` tools
+means its MCP server didn't start).
+
+| Capability | Requires | How to set it up | Configured by |
+| ---------- | -------- | ---------------- | ------------- |
+| **Chat + API** (minimum) | Python ≥3.11, a model | `uv sync`; set a cloud model + key, **or** point at a local server | `AGENT_MODEL`, provider key / `AGENT_API_BASE` |
+| **MCP tools** (Playwright, Fetch, Filesystem, Shell, RAG) | `agentgateway` on `PATH` | Install AgentGateway (see [agentgateway.dev](https://agentgateway.dev)); `serve` launches it | `AGENT_GATEWAY_*` |
+| **Browser tool** (Playwright) | Node.js (`npx`) | Install Node.js ≥18 | — (gateway runs `npx @playwright/mcp`) |
+| **Fetch + RAG MCP servers** | `uv` (`uvx`) | Already installed if you ran `uv sync` | — (gateway runs `uvx …`) |
+| **RAG vector store** | Docker | Install Docker; `serve` runs `docker compose up -d qdrant` | `AGENT_QDRANT_*` |
+| **Your own docs in RAG** | the above + PDFs | Drop PDFs in `./documents/`; ingested at startup | `AGENT_DOCS_*` |
+| **Filesystem + Shell** (sandboxed) | OpenShell + Docker | `uv tool install openshell`, `docker build -t redcell-sandbox:local sandbox/`, start the OpenShell gateway → [docs/tools-and-gateway.md#setting-up-the-execution-sandbox](docs/tools-and-gateway.md#setting-up-the-execution-sandbox) | `AGENT_OPENSHELL_*` |
+| **`web_search` builtin** | a SearXNG instance | Run SearXNG with JSON output enabled; point redcell at it | `AGENT_SEARXNG_URL` |
+
+A model is required; the rest are optional and independent — e.g. you can run the full MCP
+toolset without the execution sandbox (Filesystem/Shell just stay disabled). Every `AGENT_*`
+setting is catalogued in [docs/configuration.md](docs/configuration.md), and the security
+controls (safety prompt, guardrails, tool denylist — all on by default) are in
+[docs/security.md](docs/security.md).
+
 ## Models (local + cloud)
 
 Set `AGENT_MODEL` (LiteLLM format) and the matching key/endpoint:
@@ -125,19 +153,19 @@ To recreate the original vulnerable target end-to-end:
 agentgateway/config.yaml`) and connects the agent to its aggregated MCP
 endpoint. The starter config wires **Playwright** (browser), **Fetch** (HTTP),
 and **RAG** (Qdrant) — which run locally — plus **Filesystem** and **Shell**,
-which run on a separate **Debian VM over SSH** (see prerequisites). All sit
+which run inside an **OpenShell sandbox over SSH** (see prerequisites). All sit
 behind `:3030` (gateway UI on `:15000`).
 
 **Prerequisites:**
 
 - `agentgateway` on your `PATH`, plus `npx` (Node) and `uvx` for the local stdio
   backends. If the gateway can't start, `serve` runs with builtin tools only.
-- **For `shell` and `filesystem`: a code-execution VM.** These tools are wired as
-  `ssh debian-agent …`, so `run_command`/`run_script` and file operations execute on
-  a dedicated **Debian VM**, never on your host. A fresh checkout has no `debian-agent`
-  SSH host configured, so until you set one up these two tools simply **error** (the
-  rest still work) — they do **not** fall back to running on your machine. Setup:
-  [Setting up the execution VM](docs/tools-and-gateway.md#setting-up-the-execution-vm).
+- **For `shell` and `filesystem`: an OpenShell sandbox.** `run_process` and file
+  operations execute inside a kernel-isolated sandbox (Landlock + seccomp, policy in
+  `sandbox/policy.yaml`), never on your host. Until the OpenShell gateway is running
+  these two tools simply **error** (the rest still work) — they do **not** fall back to
+  running on your machine. Setup:
+  [Setting up the execution sandbox](docs/tools-and-gateway.md#setting-up-the-execution-sandbox).
 
 Every MCP tool call routes through the gateway — the choke point that makes
 redcell a useful test subject.
