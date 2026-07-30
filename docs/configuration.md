@@ -134,7 +134,8 @@ server runs without RAG. See [rag.md](rag.md).
 | Env var | Type | Default | Meaning |
 | ------- | ---- | ------- | ------- |
 | `AGENT_QDRANT_AUTOSTART` | bool | `true` | If false, `serve` does not start Qdrant (run it yourself). |
-| `AGENT_QDRANT_COMPOSE_FILE` | str | `docker-compose.yml` | Compose file passed as `-f`. |
+| `AGENT_QDRANT_MANAGE` | bool | `true` | If false, `serve` never shells out to `docker compose` — it only waits for the port. Used by the containerized `redcell` service, which has no Docker socket and relies on Compose itself to start and health-gate Qdrant. |
+| `AGENT_QDRANT_COMPOSE_FILE` | str | `docker-compose.yml` | Compose file passed as `-f`. Ignored when `AGENT_QDRANT_MANAGE=false`. |
 | `AGENT_QDRANT_SERVICE` | str | `qdrant` | Compose service name to bring up. |
 | `AGENT_QDRANT_HOST` | str | `127.0.0.1` | Host for the readiness probe. |
 | `AGENT_QDRANT_PORT` | int | `6333` | Qdrant REST port (readiness probe target). |
@@ -154,6 +155,34 @@ manifest skips files already ingested unchanged. See [rag.md](rag.md#auto-ingest
 | `AGENT_DOCS_MANIFEST_PATH` | str | `.redcell/ingested.json` | Where the file-hash dedup manifest is stored. |
 | `AGENT_DOCS_CHUNK_SIZE` | int | `1000` | Characters per chunk. |
 | `AGENT_DOCS_CHUNK_OVERLAP` | int | `150` | Character overlap between adjacent chunks. |
+
+## OpenTelemetry tracing (opt-in)
+
+Off by default — no SDK initialization, no overhead. Full detail, including the
+span tree shape and the content-capture warning, is in
+[observability.md](observability.md).
+
+| Env var | Type | Default | Meaning |
+| ------- | ---- | ------- | ------- |
+| `AGENT_TRACING` | bool | `false` | Master switch. Needs the `tracing` extra (`uv sync --extra tracing`); the Docker image installs it unconditionally. |
+| `AGENT_TRACING_ENDPOINT` | str | `http://127.0.0.1:4317` | OTLP collector endpoint. `http://otel-collector:4317` inside the compose stack. |
+| `AGENT_TRACING_PROTOCOL` | str | `grpc` | `grpc` or `http`. |
+| `AGENT_TRACING_SERVICE_NAME` | str | `redcell` | `service.name` resource attribute on every span. |
+| `AGENT_TRACING_SAMPLE_RATIO` | float | `1.0` | Trace-id ratio sampler. Keep at `1.0` for scans — every run matters. |
+| `AGENT_TRACING_INSTRUMENT_HTTP` | bool | `true` | FastAPI + httpx auto-instrumentation (request root span + outbound client spans to the model, SearXNG, and AgentGateway). |
+
+## Container overrides (`docker-compose.yml`)
+
+The `redcell` service reads `.env` via `env_file`, then its own `environment:` block
+wins over it on purpose — `.env` holds host-oriented values (`127.0.0.1`) that would
+point at the wrong place from inside a container. Compose always overrides:
+`AGENT_SEARXNG_URL` → `http://searxng:8080`, `AGENT_QDRANT_HOST` → `qdrant`,
+`AGENT_QDRANT_MANAGE` → `false`, `AGENT_OPENSHELL_GATEWAY_URL` →
+`http://openshell-gateway:8080`, `AGENT_OPENSHELL_HEALTH_URL` →
+`http://openshell-gateway:8081/healthz`. Setting these in `.env` has no effect in
+container mode; edit `docker-compose.yml` instead. `AGENT_GATEWAY_URL` stays on
+loopback (`http://127.0.0.1:3030/mcp`) either way, since AgentGateway still runs as
+a child process inside the same container.
 
 ## Full `.env.example`
 

@@ -13,7 +13,9 @@ touching the agent loop.
 | `redcell/tools.py` | `Tool`, the `@tool` decorator (schema from type hints), and `ToolRegistry` (executes by name, catches errors as strings). |
 | `redcell/mcp.py` | `MCPManager` — discovers tools from one upstream MCP endpoint (AgentGateway) and wraps each as a local `Tool`. |
 | `redcell/gateway.py` | `GatewaySupervisor` — spawns and health-checks the AgentGateway child process. |
-| `redcell/qdrant.py` | `QdrantSupervisor` — brings the RAG store up via `docker compose` and health-checks its port. |
+| `redcell/qdrant.py` | `QdrantSupervisor` — brings the RAG store up via `docker compose` and health-checks its port; `qdrant_manage=false` skips the compose call and only waits (used by the containerized `redcell` service, where Compose itself starts Qdrant). |
+| `redcell/openshell.py` | `OpenShellSupervisor` — creates/reuses the OpenShell execution sandbox and writes the SSH config AgentGateway launches `shell`/`filesystem` through. Same never-raise degrade pattern as the other supervisors. |
+| `redcell/tracing.py` | `setup_tracing`, `TracingHooks`, `instrument_app` — opt-in (`AGENT_TRACING`) OpenTelemetry export. Attaches to the same `Hooks` object as `CostAccountant`; see [observability.md](observability.md). |
 | `redcell/preflight.py` | Startup checks: external runtimes on PATH + per-gateway-target tool health (`redcell doctor`). |
 | `redcell/server.py` | FastAPI app exposing the OpenAI-compatible `/v1/*` endpoints. |
 | `redcell/sessions.py` | `SessionStore` — server-side conversation memory keyed by session id (LRU + TTL). |
@@ -32,9 +34,11 @@ touching the agent loop.
   `llm.py` knows a vendor exists.
 - **Stateless core, optional state.** The HTTP server builds a fresh `Agent` per
   request. History is client-owned by default; server-side `SessionStore` is opt-in.
-- **Resilient/degrading.** A missing gateway binary, an unreachable MCP endpoint, or
-  a failing tool call never crashes a turn — they log and the agent continues with
-  whatever tools are available, surfacing tool errors back to the model as strings.
+- **Resilient/degrading.** A missing gateway binary, an unreachable MCP endpoint, an
+  unavailable OpenShell sandbox, or a failing tool call never crashes a turn — they
+  log and the agent continues with whatever tools are available, surfacing tool
+  errors back to the model as strings. `shell`/`filesystem` never fall back to
+  running on the host when the sandbox is down; they simply error.
 - **Observable.** Every LLM call, tool call, and guardrail action emits a `Hooks`
   event tagged with a per-turn `run_id` (the session id for stateful turns), so a
   turn's events stay attributable even when many sessions interleave. `tool_end`
@@ -45,8 +49,16 @@ touching the agent loop.
   A `CostAccountant` (`accounting.py`) subscribes to these events and emits a
   per-run `scorecard` (tokens, USD cost via `pricing.py`, llm/tool/guardrail
   counts) at each `run_end`, turning a scan's event stream into a cost report.
+  `TracingHooks` (`tracing.py`) subscribes to the same `Hooks` object to build an
+  opt-in OpenTelemetry span tree per run — see [observability.md](observability.md).
 - **Secure-by-default, toggleable.** Safety prompt and guardrail are on; each
   vulnerable surface is a single config switch (see [security.md](security.md)).
+- **Deployable as one process or one container.** `redcell serve` runs the same way
+  whether invoked on the host via `uv` or as the `redcell` service in
+  `docker-compose.yml` — only network-facing settings differ (e.g. `AGENT_QDRANT_HOST`,
+  `AGENT_SEARXNG_URL`). `docker compose up` brings up Qdrant, SearXNG, and the
+  OpenShell gateway alongside it, so the only thing left external is the model
+  endpoint.
 
 ## Request lifecycle (served API)
 

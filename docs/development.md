@@ -9,6 +9,10 @@ redcell/
   tools.py          # Tool, @tool, ToolRegistry
   mcp.py            # MCPManager — gateway tools as local Tools
   gateway.py        # GatewaySupervisor — child process lifecycle
+  qdrant.py         # QdrantSupervisor — RAG store lifecycle
+  openshell.py      # OpenShellSupervisor — execution sandbox lifecycle
+  preflight.py      # runtime + per-target tool-health checks (`redcell doctor`)
+  tracing.py        # opt-in OpenTelemetry export (TracingHooks, setup_tracing)
   server.py         # FastAPI OpenAI-compatible app
   sessions.py       # SessionStore (LRU + TTL)
   memory.py         # Memory interface + InMemoryStore
@@ -20,7 +24,11 @@ redcell/
   cli.py            # Typer CLI
   rag/              # corpus loading + seeding
 agentgateway/config.yaml   # MCP backends aggregated by the gateway
-docker-compose.yml         # Qdrant for RAG
+sandbox/                   # OpenShell execution-sandbox image + policy.yaml
+openshell/                 # OpenShell gateway config (gateway.toml) + JWT init script
+Dockerfile                 # the redcell image (python/uv/node/agentgateway/openshell)
+docker-compose.yml         # full stack: qdrant, searxng, openshell gateway, redcell
+                            # (+ optional otel-collector/tempo/loki/grafana profile)
 examples/demo_agent.py     # minimal library usage
 tests/                     # offline test suite (never hits the network)
 docs/                      # this documentation
@@ -138,6 +146,11 @@ module.
 
 ### Observability hooks
 
-`Hooks` fires on `llm_start`, `llm_end`, `tool_start`, `tool_end`,
-`guardrail_input_block`, `guardrail_output_redact`. Register callbacks with
-`hooks.on(event, cb)` or use `logging_hooks()` to log the standard lifecycle events.
+`Hooks` fires on `run_start`, `llm_start`, `llm_end`, `tool_start`, `tool_end`,
+`max_iterations`, `run_end`, `permission`, `compaction`, `guardrail_input_block`,
+`guardrail_output_redact`, and `guardrail_tool_redact` (the full set is
+`observability.LIFECYCLE_EVENTS`). Register callbacks with `hooks.on(event, cb)`, or
+use `logging_hooks()` to log all of them. `CostAccountant.attach(hooks)`
+(`accounting.py`) and `TracingHooks(...).attach(hooks)` (`tracing.py`) are the two
+built-in subscribers and the reference pattern for a third — both key their
+per-run state off `run_id` and drop it at `run_end`.

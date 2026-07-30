@@ -21,6 +21,7 @@ This folder is the full reference. Start with whichever page matches your task.
 | [Security controls](security.md) | Safety prompt, guardrails, tool denylist, threat model, eval workflow |
 | [Tools & AgentGateway](tools-and-gateway.md) | Builtin tools, the `@tool` decorator, MCP, the gateway targets |
 | [RAG knowledge base](rag.md) | Qdrant, the seed corpus, poisoning/canaries, indirect injection |
+| [Observability](observability.md) | Structured logs, opt-in OpenTelemetry tracing, Grafana/Tempo/Loki |
 | [Development](development.md) | Layout, tests, public API, extending tools/guardrails/memory |
 
 ## 60-second start
@@ -31,6 +32,14 @@ cp .env.example .env          # set AGENT_MODEL + the matching key/endpoint
 uv run redcell chat           # interactive REPL
 # or
 uv run redcell serve          # OpenAI-compatible API on :8800 (+ AgentGateway)
+```
+
+Or bring up the whole stack — AgentGateway, SearXNG, Qdrant, the OpenShell sandbox
+gateway, and redcell — in one shot:
+
+```bash
+docker build -t redcell-sandbox:local sandbox/   # one-time
+docker compose up -d
 ```
 
 ## Mental model
@@ -53,19 +62,29 @@ uv run redcell serve          # OpenAI-compatible API on :8800 (+ AgentGateway)
 └───────────────┬───────────────┘
                 │  MCP    :3030
                 ▼
-┌───────────────────────────────┐
-│ AgentGateway  (choke point)   │
-│    ├ playwright               │
-│    ├ filesystem   (VM)        │
-│    ├ fetch                    │
-│    ├ rag  (Qdrant)            │
-│    └ shell        (VM)        │
-└───────────────────────────────┘
+┌────────────────────────────────────┐
+│ AgentGateway  (choke point)        │
+│    ├ playwright                    │
+│    ├ filesystem  (OpenShell sbx)   │
+│    ├ fetch                         │
+│    ├ rag  (Qdrant)                 │
+│    └ shell        (OpenShell sbx)  │
+└────────────────────────────────────┘
 ```
+
+`redcell`, AgentGateway's local targets, Qdrant, and SearXNG's containment for
+`filesystem`/`shell` are all reachable this way whether redcell runs on the host or
+inside `docker compose up`'s `redcell` service — only the network names change
+(`qdrant` vs `127.0.0.1`, etc., see [configuration.md](configuration.md)). The
+OpenShell sandbox itself is a sibling container the OpenShell gateway creates on
+demand, not shown as its own box above; see
+[tools-and-gateway.md](tools-and-gateway.md#setting-up-the-execution-sandbox).
 
 Two layers you toggle for testing: **security controls** (safety prompt + guardrail,
 on by default — see [security.md](security.md)) and the **vulnerable tool surface**
-(the gateway targets, deny individual ones via config).
+(the gateway targets, deny individual ones via config). A third, opt-in layer —
+**tracing** — records everything the agent did for forensic replay; see
+[observability.md](observability.md).
 
 [LiteLLM]: https://docs.litellm.ai/
 [AgentGateway]: https://agentgateway.dev/

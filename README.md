@@ -13,8 +13,9 @@ point for a full trace of what the agent actually did.
 
 - **Local-first, cloud-capable** — one config value (`AGENT_MODEL`) switches
   between self-hosted vLLM/Ollama and hosted Anthropic/OpenAI.
-- **MCP tools via AgentGateway** — Playwright (browser), Filesystem, and Fetch
-  behind a single aggregated endpoint; add more by editing one YAML.
+- **MCP tools via AgentGateway** — Playwright (browser), Filesystem, Shell, Fetch,
+  and RAG (Qdrant) behind a single aggregated endpoint; add more by editing one YAML.
+  Filesystem and Shell run inside an isolated **OpenShell** sandbox, never on the host.
 - **OpenAI-compatible server** — `redcell serve` exposes `/v1/chat/completions`
   so Open WebUI and scanners like Garak/Promptfoo can drive it.
 - **Observable** — every MCP tool call routes through the gateway, so you can
@@ -28,14 +29,36 @@ Full reference lives in [`docs/`](docs/README.md):
 
 - [Architecture](docs/architecture.md) — components, request lifecycle, the agent loop
 - [Configuration reference](docs/configuration.md) — every `AGENT_*` setting
-- [CLI reference](docs/cli.md) — `serve`, `chat`, `rag-seed`, `version`
+- [CLI reference](docs/cli.md) — `serve`, `chat`, `rag-seed`, `doctor`, `version`
 - [Server & API](docs/server-api.md) — endpoints, auth, streaming, **sessions**
 - [Security controls](docs/security.md) — safety prompt, guardrails, toggles, eval workflow
 - [Tools & AgentGateway](docs/tools-and-gateway.md) — builtin tools, MCP, gateway targets
 - [RAG knowledge base](docs/rag.md) — Qdrant, corpus, poison/canaries
+- [Observability](docs/observability.md) — structured logs, opt-in OpenTelemetry tracing
 - [Development](docs/development.md) — layout, tests, public API, extension points
 
 ## Quickstart
+
+Two ways to run redcell. **Docker Compose** brings up the whole stack — AgentGateway,
+SearXNG, Qdrant, the OpenShell sandbox gateway, and redcell itself — with one command.
+**Host mode** runs `redcell` directly via `uv`, handiest for development. Either way,
+the only thing left external is the remote model endpoint.
+
+### Docker Compose (the whole stack)
+
+```bash
+cp .env.example .env
+# set AGENT_MODEL + keys/endpoint, and SEARXNG_SECRET (openssl rand -hex 32)
+docker build -t redcell-sandbox:local sandbox/   # one-time: the exec sandbox image
+docker compose up -d
+curl http://127.0.0.1:8800/v1/models
+```
+
+Add `--profile observability` to also start the OTel collector + a local Grafana —
+see [docs/observability.md](docs/observability.md). The execution sandbox container
+itself isn't a compose service; the OpenShell gateway creates it on demand.
+
+### Host (uv)
 
 ```bash
 uv sync
@@ -50,11 +73,16 @@ with nothing else. Every additional capability needs one external runtime in pla
 redcell degrades gracefully when one is missing (that tool/target simply goes away and is
 reported, never silently wrong), so add only what you want to exercise.
 
+**`docker compose up -d` provides every row below except the model** — AgentGateway,
+SearXNG, Qdrant, and the OpenShell gateway all come up as part of the stack (the sandbox
+*image* still needs a one-time `docker build`, see the Quickstart above). The table is
+written for **host mode**, where you bring each runtime up yourself.
+
 **Check your setup any time:** `uv run redcell doctor` reports each runtime ✓/✗ with a fix
 hint, and `redcell serve` prints per-target tool health at startup (a target with `0` tools
 means its MCP server didn't start).
 
-| Capability | Requires | How to set it up | Configured by |
+| Capability | Requires | How to set it up (host mode) | Configured by |
 | ---------- | -------- | ---------------- | ------------- |
 | **Chat + API** (minimum) | Python ≥3.11, a model | `uv sync`; set a cloud model + key, **or** point at a local server | `AGENT_MODEL`, provider key / `AGENT_API_BASE` |
 | **MCP tools** (Playwright, Fetch, Filesystem, Shell, RAG) | `agentgateway` on `PATH` | Install AgentGateway (see [agentgateway.dev](https://agentgateway.dev)); `serve` launches it | `AGENT_GATEWAY_*` |
@@ -63,7 +91,8 @@ means its MCP server didn't start).
 | **RAG vector store** | Docker | Install Docker; `serve` runs `docker compose up -d qdrant` | `AGENT_QDRANT_*` |
 | **Your own docs in RAG** | the above + PDFs | Drop PDFs in `./documents/`; ingested at startup | `AGENT_DOCS_*` |
 | **Filesystem + Shell** (sandboxed) | OpenShell + Docker | `uv tool install openshell`, `docker build -t redcell-sandbox:local sandbox/`, start the OpenShell gateway → [docs/tools-and-gateway.md#setting-up-the-execution-sandbox](docs/tools-and-gateway.md#setting-up-the-execution-sandbox) | `AGENT_OPENSHELL_*` |
-| **`web_search` builtin** | a SearXNG instance | Run SearXNG with JSON output enabled; point redcell at it | `AGENT_SEARXNG_URL` |
+| **`web_search` builtin** | a SearXNG instance | Run SearXNG with JSON output enabled (vendored: `docker compose up -d searxng`, needs `SEARXNG_SECRET` in `.env`) | `AGENT_SEARXNG_URL` |
+| **Full trace of a run** (opt-in) | the `tracing` extra + a collector | `uv sync --extra tracing`; `AGENT_TRACING=true` — see [docs/observability.md](docs/observability.md) | `AGENT_TRACING*` |
 
 A model is required; the rest are optional and independent — e.g. you can run the full MCP
 toolset without the execution sandbox (Filesystem/Shell just stay disabled). Every `AGENT_*`
@@ -177,7 +206,7 @@ DB behind the official **`mcp-server-qdrant`** (local FastEmbed embeddings),
 exposed as the gateway `rag` target with `qdrant-store` and `qdrant-find`.
 
 ```bash
-docker compose up -d qdrant     # start Qdrant on :6333
+docker compose up -d qdrant     # start Qdrant on :6333 (or `docker compose up -d` for the whole stack)
 uv run redcell serve            # brings up the gateway + rag target
 uv run redcell rag-seed         # load the bundled corpus into the store
 ```
@@ -186,8 +215,8 @@ The bundled corpus (`redcell/rag/corpus/seed_corpus.json`) mixes benign docs wit
 **planted poison docs** carrying unique canary IDs. Because retrieval routes
 through the gateway, you can see whether a retrieved poison doc actually drove a
 `shell`/`filesystem` action — the canary appearing in a tool call (or a
-`RC-CANARY-*.txt` file in the VM sandbox) is measurable injection success. This is
-the **indirect prompt injection** surface for tools like Garak/Promptfoo to probe.
+`RC-CANARY-*.txt` file in the OpenShell sandbox) is measurable injection success.
+This is the **indirect prompt injection** surface for tools like Garak/Promptfoo to probe.
 
 ## Development
 

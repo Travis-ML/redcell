@@ -71,6 +71,9 @@ The active guardrail (`AGENT_GUARDRAILS`) applies here too. Exit with `Ctrl-C`.
 
 Runs the OpenAI-compatible HTTP API (see [server-api.md](server-api.md)) and, unless
 disabled, launches and supervises an AgentGateway process so MCP tools are available.
+This is also the entry point `docker-compose.yml`'s `redcell` service runs — the
+container just sets the network-facing settings for you (Compose DNS names instead of
+`127.0.0.1`, `AGENT_QDRANT_MANAGE=false`), so this reference applies to both modes.
 
 ```bash
 uv run redcell serve
@@ -91,9 +94,18 @@ Serving agent (anthropic/claude-opus-4-8) as model 'redcell'.
   docker: http://host.docker.internal:8800/v1  (use this in Open WebUI)
   gateway: launching 'agentgateway' on :3030
   qdrant:  docker compose up -d qdrant (RAG store on :6333)
-  docs:    ingesting PDFs from 'documents/' into the RAG store
   sandbox: OpenShell 'redcell-sbx' (shell/filesystem run there, not on this host)
+  docs:    ingesting PDFs from 'documents/' into the RAG store
   preflight: agentgateway ✓  npx ✓  uvx ✓  docker ✓  openshell ✓  ssh ✓
+```
+
+The `qdrant:` line reads `waiting for <host>` instead of `docker compose up -d ...`
+when `AGENT_QDRANT_MANAGE=false` — the mode the containerized `redcell` service uses,
+since Compose itself starts Qdrant and gates `redcell` on its healthcheck. With
+`AGENT_TRACING=true` an additional line appears before `preflight`:
+
+```
+  tracing: OTLP -> http://127.0.0.1:4317 (spans include prompt/tool content)
 ```
 
 If `AGENT_MCP_TOOL_DENYLIST` is set, the denied tool names are printed too.
@@ -102,9 +114,9 @@ If `AGENT_MCP_TOOL_DENYLIST` is set, the denied tool names are printed too.
 runtimes — `agentgateway`, `npx`, `uvx`, `docker` — on PATH, with a fix hint for any that
 aren't) and, once the gateway connects, logs **per-target tool health** —
 `gateway targets — playwright:21  fetch:1  rag:2  filesystem:8  shell:0 ✗` — so a target
-whose MCP server failed to start (missing runtime, unreachable VM) shows as `0` instead of
-silently vanishing. Run [`redcell doctor`](#redcell-doctor) to check the same runtimes
-before starting.
+whose MCP server failed to start (missing runtime, unreachable OpenShell sandbox) shows as
+`0` instead of silently vanishing. Run [`redcell doctor`](#redcell-doctor) to check the
+same runtimes before starting.
 
 **Gateway behavior:** controlled by `AGENT_GATEWAY_*` (see
 [configuration.md](configuration.md)). If the binary is missing or never becomes
