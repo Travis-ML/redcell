@@ -38,8 +38,7 @@ Or bring up the whole stack — AgentGateway, SearXNG, Qdrant, the OpenShell san
 gateway, and redcell — in one shot:
 
 ```bash
-docker build -t redcell-sandbox:local sandbox/   # one-time
-docker compose up -d
+docker compose up -d   # builds the redcell and sandbox images on first run
 ```
 
 ## Mental model

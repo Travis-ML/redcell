@@ -29,3 +29,12 @@ server:
   # during a scan. The rate limiter would throttle exactly that.
   limiter: false
   public_instance: false
+
+# Bing is off in SearXNG's defaults. It is enabled here as one more source for
+# the general category: the default engines (Brave, DuckDuckGo, Google, Startpage)
+# rate-limit or CAPTCHA a fresh instance quickly, and web_search then returns
+# nothing. With use_default_settings, listing an engine here merges by name and
+# leaves the rest of the defaults as they are.
+engines:
+  - name: bing
+    disabled: false

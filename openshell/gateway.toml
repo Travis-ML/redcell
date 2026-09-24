@@ -51,7 +51,8 @@ allow_unauthenticated_users = true
 # NVIDIA/OpenShell#674 (pushing a built image into a containerized gateway
 # fails on macOS).
 default_image = "redcell-sandbox:local"
-supervisor_image = "ghcr.io/nvidia/openshell/supervisor:latest"
+# Pinned with the gateway image and the openshell CLI; bump all three together.
+supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.92"
 image_pull_policy = "IfNotPresent"
 sandbox_namespace = "redcell"
 # Sandbox containers call back here. The driver rewrites the host to

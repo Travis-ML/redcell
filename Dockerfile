@@ -13,7 +13,8 @@
 # ---- agentgateway binary -----------------------------------------------------
 # Lifted from the official image rather than downloaded, so there is no
 # release-URL scraping to maintain.
-FROM ghcr.io/agentgateway/agentgateway:latest AS agentgateway
+# Pinned: the gateway config schema has changed between releases.
+FROM ghcr.io/agentgateway/agentgateway:v1.4.1 AS agentgateway
 
 # ---- runtime -----------------------------------------------------------------
 # Node base rather than a Playwright base image. @playwright/mcp pins an exact
@@ -53,7 +54,7 @@ RUN apt-get update \
 # /app/agentgateway, not /usr/local/bin: the upstream image is distroless with the
 # binary at its ENTRYPOINT path.
 COPY --from=agentgateway /app/agentgateway /usr/local/bin/agentgateway
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.18 /uv /uvx /usr/local/bin/
 
 # Let uv own the interpreter instead of apt: it pins the version against
 # pyproject's requires-python, and Debian's python3 is whatever the release
@@ -71,9 +72,23 @@ RUN uv tool install openshell==0.0.92 \
 # unpinned upgrade can change the tool surface mid-project. `--with-deps` pulls
 # both the browser build this exact version wants and the system libraries it
 # needs.
+#
+# The browser is installed by @playwright/mcp's own `install-browser`, which runs
+# the playwright-core bundled inside the package. `npx playwright install` looks
+# the same but is not: nothing global provides a `playwright` bin, so npx fetches
+# the newest `playwright` from npm and installs *its* browser build, which the
+# pinned MCP package then cannot find at launch.
 RUN npm install -g --no-fund --no-audit @playwright/mcp@0.0.78 \
- && npx --yes playwright install --with-deps chromium \
+ && playwright-mcp install-browser --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
+
+# @playwright/mcp defaults to the branded Chrome channel, which is not installed
+# here and has no linux/arm64 build at all, so point it at the Chromium above.
+# Headless because the container has no display. Read from the environment by
+# @playwright/mcp itself, so agentgateway/config.yaml stays the same for host
+# mode, where a desktop Chrome is the better default.
+ENV PLAYWRIGHT_MCP_BROWSER=chromium \
+    PLAYWRIGHT_MCP_HEADLESS=true
 
 # Warm the uv cache for the two uvx-launched MCP servers so the gateway does not
 # hit PyPI at startup. `mcp<2` is required, not incidental: mcp 2.0 renamed

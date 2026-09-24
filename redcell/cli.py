@@ -15,13 +15,20 @@ from .accounting import CostAccountant
 from .agent import Agent
 from .config import Settings
 from .gateway import GatewaySupervisor
+from .gatewayconfig import write_effective_config
 from .guardrails import make_guardrail
 from .llm import LLM
 from .mcp import MCPManager, streamable_http_session
 from .observability import configure_logging, logging_hooks
 from .openshell import OpenShellSupervisor
 from .permissions import NullPolicy, Policy, PolicyEngine, Rule, parse_rule
-from .preflight import check_runtimes, parse_target_names, target_tool_counts
+from .preflight import (
+    check_model,
+    check_runtimes,
+    parse_target_names,
+    port_in_use,
+    target_tool_counts,
+)
 from .prompts import build_system_prompt
 from .qdrant import QdrantSupervisor
 from .rag.corpus import default_corpus_path, load_corpus
@@ -171,9 +178,20 @@ def version() -> None:
 @app.command()
 def doctor() -> None:
     """Check the external runtimes the MCP stack needs (run before `serve`)."""
+    import os
+
+    from dotenv import dotenv_values
+
     settings = Settings()
-    typer.echo("redcell doctor — MCP runtime prerequisites")
-    ok_all = True
+    typer.echo("redcell doctor — prerequisites")
+    # Provider keys live in .env but are read by LiteLLM, not Settings; merge them
+    # explicitly rather than relying on litellm's import-time load_dotenv().
+    environ = {**{k: v for k, v in dotenv_values(".env").items() if v}, **os.environ}
+    model = check_model(settings.model, api_base=settings.api_base, environ=environ)
+    ok_all = model.ok
+    typer.echo(
+        f"  {'✓' if model.ok else '✗'} {model.name}" + ("" if model.ok else f"  — {model.hint}")
+    )
     for c in check_runtimes(gateway_bin=settings.gateway_bin, openshell_bin=settings.openshell_bin):
         ok_all = ok_all and c.ok
         line = f"  {'✓' if c.ok else '✗'} {c.name}"
@@ -196,6 +214,15 @@ def _probe_openshell_gateway(settings: Settings) -> tuple[bool, str]:
     try:
         resp = httpx.get(settings.openshell_health_url, timeout=5.0)
     except Exception as exc:
+        gw = httpx.URL(settings.openshell_gateway_url)
+        if gw.host and gw.port and port_in_use(gw.host, gw.port):
+            # The gateway's port answers but its health endpoint does not: most
+            # likely another program owns the port. It cannot be remapped, because
+            # sandboxes call the gateway back on its own port number.
+            return False, (
+                f"port {gw.port} is in use by something else — the OpenShell gateway "
+                f"must own it; stop that process or container"
+            )
         return False, f"unreachable ({type(exc).__name__}) — is the stack up?"
     if resp.status_code == 200:
         return True, "healthy"
@@ -299,18 +326,43 @@ def serve(
             enforce_system_prompt=settings.safety_prompt,
         )
 
+    openshell = None
+    if settings.openshell_autostart:
+        openshell = _make_openshell(settings)
+
+    # The config the gateway actually runs; replaced by the rendered copy at start.
+    gateway_config = {"path": settings.gateway_config_path}
+
+    def gateway_command() -> list[str]:
+        # Called by the lifespan after the sandbox supervisor has settled, so the
+        # rendered config knows whether the SSH-launched targets can start.
+        sandbox_up = (
+            openshell.available
+            if openshell is not None
+            else Path(settings.openshell_ssh_config_path).exists()
+        )
+        path, dropped = write_effective_config(
+            settings.gateway_config_path,
+            settings.gateway_effective_config_path,
+            sandbox_available=sandbox_up,
+            ssh_config_path=settings.openshell_ssh_config_path,
+            qdrant_url=f"http://{settings.qdrant_host}:{settings.qdrant_port}",
+        )
+        for name, reason in dropped:
+            logging.getLogger("redcell.cli").warning(
+                "gateway target %r skipped (%s); the other targets are unaffected", name, reason
+            )
+        gateway_config["path"] = path
+        return [settings.gateway_bin, "-f", path]
+
     gateway = None
     if settings.gateway_autostart:
         gateway = GatewaySupervisor(
-            command=[settings.gateway_bin, "-f", settings.gateway_config_path],
+            command=gateway_command,
             host=settings.gateway_host,
             port=settings.gateway_port,
             ready_timeout=settings.gateway_ready_timeout,
         )
-
-    openshell = None
-    if settings.openshell_autostart:
-        openshell = _make_openshell(settings)
 
     qdrant = None
     if settings.qdrant_autostart:
@@ -333,7 +385,7 @@ def serve(
         # Runs after the gateway/MCP manager are up: first report which targets
         # actually produced tools (a down target = its MCP server failed to
         # start), then ingest documents if enabled.
-        _report_target_health(manager.tools(), settings.gateway_config_path)
+        _report_target_health(manager.tools(), gateway_config["path"])
         if settings.docs_autoload and settings.docs_dir:
             try:
                 await ingest_documents(

@@ -3,6 +3,7 @@
 #
 #   qdrant             RAG vector store
 #   valkey + searxng   the web_search builtin
+#   sandbox-image      one-shot build of the execution-sandbox image
 #   openshell-gateway  control plane for the execution sandbox
 #   redcell            the agent server, which also spawns AgentGateway
 #
@@ -19,7 +20,7 @@ name: redcell
 
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.18.2
     container_name: redcell-qdrant
     restart: unless-stopped
     ports:
@@ -50,7 +51,7 @@ services:
       retries: 12
 
   searxng:
-    image: searxng/searxng:latest
+    image: searxng/searxng:2026.8.12-cdfdaa5a8
     container_name: redcell-searxng
     restart: unless-stopped
     # 8989 on the host keeps the URL that already worked; 8080 is what the image
@@ -79,6 +80,18 @@ services:
       retries: 12
       start_period: 20s
 
+  # One-shot: builds the execution-sandbox image (sandbox/Dockerfile) so a plain
+  # `docker compose up` needs no separate `docker build`. The OpenShell gateway
+  # creates sandbox containers from this tag; it is never pulled (gateway.toml
+  # sets IfNotPresent). The container just exits; the image is the product.
+  # Rebuild after editing sandbox/: `docker compose build sandbox-image`.
+  sandbox-image:
+    build:
+      context: ./sandbox
+    image: redcell-sandbox:local
+    entrypoint: ["true"]
+    restart: "no"
+
   # One-shot: the OpenShell gateway needs an Ed25519 sandbox-JWT keypair and
   # refuses to start without one, but will not generate it itself. This runs in a
   # container rather than on the host because /var/lib/openshell exists only
@@ -97,7 +110,10 @@ services:
     command: ["sh", "-c", "apk add --no-cache openssl >/dev/null && sh /jwt-init.sh"]
 
   openshell-gateway:
-    image: ghcr.io/nvidia/openshell/gateway:latest
+    # Pinned to the same release as the openshell CLI in the redcell image
+    # (Dockerfile). The two talk a versioned protocol, and gateway.toml was
+    # worked out against this release; bump all three together.
+    image: ghcr.io/nvidia/openshell/gateway:0.0.92
     container_name: redcell-openshell-gateway
     restart: unless-stopped
     # Clear the image's default CMD so gateway.toml owns every setting: CLI flags
@@ -137,6 +153,8 @@ services:
       HOME: /var/lib/openshell
     depends_on:
       openshell-jwt-init:
+        condition: service_completed_successfully
+      sandbox-image:
         condition: service_completed_successfully
 
   redcell:

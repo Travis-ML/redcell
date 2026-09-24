@@ -58,3 +58,24 @@ async def test_process_that_exits_is_not_ready():
     await sup.start()
     assert sup.available is False
     await sup.stop()  # no-op: process already exited
+
+
+async def test_command_factory_is_called_at_start():
+    # The effective config depends on whether the sandbox came up, which is only
+    # known once the lifespan reaches the gateway, so the command is built then.
+    calls = []
+
+    def factory() -> list[str]:
+        calls.append(True)
+        return ["definitely-not-a-real-binary-xyz", "-f", "effective.yaml"]
+
+    sup = GatewaySupervisor(
+        command=factory,
+        host="127.0.0.1",
+        port=_free_port(),
+        ready_timeout=1.0,
+    )
+    assert calls == []
+    await sup.start()
+    assert calls == [True]
+    assert sup.available is False

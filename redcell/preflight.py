@@ -15,8 +15,11 @@ actionable line at startup.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import socket
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,3 +108,46 @@ def target_tool_counts(tool_names: list[str], targets: list[str]) -> dict[str, i
                 counts[t] += 1
                 break
     return counts
+
+
+# Provider prefix (LiteLLM format) -> the environment variable holding its key.
+_PROVIDER_KEYS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
+# Self-hosted providers that can only be reached through AGENT_API_BASE.
+_NEEDS_API_BASE = {"hosted_vllm"}
+
+
+def check_model(
+    model: str, *, api_base: str | None, environ: Mapping[str, str] | None = None
+) -> Check:
+    """Check the model has what it needs to be called: a provider key or an endpoint.
+
+    An ``api_base`` means an OpenAI-compatible server the user runs, which
+    satisfies any provider. Unknown providers pass: LiteLLM supports far more
+    than this table and the first request reports anything missing.
+    """
+    env = os.environ if environ is None else environ
+    name = f"model ({model})"
+    provider = model.split("/", 1)[0] if "/" in model else ""
+    if api_base:
+        return Check(name, True)
+    if provider in _NEEDS_API_BASE:
+        return Check(name, False, "set AGENT_API_BASE to your server, e.g. http://HOST:8000/v1")
+    key = _PROVIDER_KEYS.get(provider)
+    if key and not env.get(key):
+        return Check(name, False, f"set {key} in .env")
+    return Check(name, True)
+
+
+def port_in_use(host: str, port: int) -> bool:
+    """True if something accepts TCP connections on ``host:port``."""
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True
+    except OSError:
+        return False

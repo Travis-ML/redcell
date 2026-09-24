@@ -49,14 +49,19 @@ the only thing left external is the remote model endpoint.
 ```bash
 cp .env.example .env
 # set AGENT_MODEL + keys/endpoint, and SEARXNG_SECRET (openssl rand -hex 32)
-docker build -t redcell-sandbox:local sandbox/   # one-time: the exec sandbox image
-docker compose up -d
+docker compose up -d                  # first run builds the images; takes a few minutes
 curl http://127.0.0.1:8800/v1/models
 ```
 
+The stack publishes ports **8800** (API), **8080/8081** (OpenShell gateway), **6333/6334**
+(Qdrant) and **8989** (SearXNG). Port 8080 has to be free: the sandbox calls the
+OpenShell gateway back on that exact port, so it cannot be remapped. `uv run redcell
+doctor` points out a port 8080 conflict.
+
 Add `--profile observability` to also start the OTel collector + a local Grafana —
-see [docs/observability.md](docs/observability.md). The execution sandbox container
-itself isn't a compose service; the OpenShell gateway creates it on demand.
+see [docs/observability.md](docs/observability.md). The sandbox *image* is built by the
+one-shot `sandbox-image` service; the sandbox *container* is created on demand by the
+OpenShell gateway.
 
 ### Host (uv)
 
@@ -70,12 +75,13 @@ uv run redcell chat
 
 redcell runs with **just a model configured** — chat and the OpenAI-compatible API work
 with nothing else. Every additional capability needs one external runtime in place.
-redcell degrades gracefully when one is missing (that tool/target simply goes away and is
-reported, never silently wrong), so add only what you want to exercise.
+redcell degrades gracefully when one is missing: at startup it skips any gateway target
+that cannot start, logs why, and the remaining targets keep working. Add only what you
+want to exercise.
 
 **`docker compose up -d` provides every row below except the model** — AgentGateway,
-SearXNG, Qdrant, and the OpenShell gateway all come up as part of the stack (the sandbox
-*image* still needs a one-time `docker build`, see the Quickstart above). The table is
+SearXNG, Qdrant, the OpenShell gateway and the sandbox image all come up as part of the
+stack. The table is
 written for **host mode**, where you bring each runtime up yourself.
 
 **Check your setup any time:** `uv run redcell doctor` reports each runtime ✓/✗ with a fix

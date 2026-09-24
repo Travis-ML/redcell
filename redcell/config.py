@@ -16,6 +16,10 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # `KEY=` with nothing after it means "unset", not "the empty string".
+        # .env.example ships blank placeholders; without this, a blank
+        # AGENT_SERVER_API_KEY turned auth on with an empty token.
+        env_ignore_empty=True,
     )
 
     model: str = "anthropic/claude-opus-4-8"
@@ -156,6 +160,9 @@ class Settings(BaseSettings):
     # AgentGateway — `serve` launches this process and proxies MCP traffic through it.
     gateway_bin: str = "agentgateway"
     gateway_config_path: str = "agentgateway/config.yaml"
+    # Where `serve` writes the copy it actually launches: gateway_config_path with
+    # unstartable targets dropped and QDRANT_URL filled in (redcell/gatewayconfig.py).
+    gateway_effective_config_path: str = ".redcell/agentgateway.yaml"
     # Host/port the gateway's MCP proxy binds (used for the readiness probe).
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 3030

@@ -165,6 +165,16 @@ def test_auth_open_by_default():
     assert client.get("/v1/models").status_code == 200
 
 
+def test_blank_api_key_means_auth_off():
+    # A blank key is "not configured", not "require an empty bearer token":
+    # clients like Open WebUI always send some key and would otherwise get 401.
+    client = make_client([LLMResponse(text="ok")], api_key="")
+    assert client.get("/v1/models").status_code == 200
+    assert (
+        client.get("/v1/models", headers={"Authorization": "Bearer sk-anything"}).status_code == 200
+    )
+
+
 class _FakeGateway:
     def __init__(self):
         self.started = self.stopped = False

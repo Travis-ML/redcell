@@ -30,7 +30,8 @@ setup *before* starting the server. No options.
 
 ```bash
 uv run redcell doctor
-#   redcell doctor — MCP runtime prerequisites
+#   redcell doctor — prerequisites
+#     ✓ model (anthropic/claude-opus-4-8)
 #     ✓ agentgateway
 #     ✓ npx
 #     ✗ uvx  — install uv — runs the fetch + qdrant MCP servers (astral.sh/uv)
@@ -40,9 +41,11 @@ uv run redcell doctor
 #     ✓ OpenShell gateway (http://127.0.0.1:8081/healthz) — healthy
 ```
 
-Checks `agentgateway`, `npx` (Playwright), `uvx` (Fetch + RAG servers), `docker` (Qdrant),
+Checks that the model can be called (the provider key for cloud models such as
+`ANTHROPIC_API_KEY`, or `AGENT_API_BASE` for self-hosted ones), then `agentgateway`, `npx` (Playwright), `uvx` (Fetch + RAG servers), `docker` (Qdrant),
 `openshell` and `ssh` (the execution sandbox), and probes the OpenShell gateway's health
-endpoint (`AGENT_OPENSHELL_HEALTH_URL`). Exits non-zero if anything is
+endpoint (`AGENT_OPENSHELL_HEALTH_URL`). If that probe fails while the gateway's port
+still answers, it reports that another program owns port 8080. Exits non-zero if anything is
 missing, so it's usable in CI/setup scripts. Per-target *tool* health (which MCP servers
 actually produced tools) is reported separately by `serve` once the gateway connects.
 

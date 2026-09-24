@@ -27,7 +27,7 @@ back to `exec`, re-test with stdin held open before you do.
 ## Rebuilding
 
 ```bash
-docker build -t redcell-sandbox:local sandbox/
+docker compose build sandbox-image    # or: docker build -t redcell-sandbox:local sandbox/
 ```
 
 The tag is what `openshell/gateway.toml` sets as `default_image`, with

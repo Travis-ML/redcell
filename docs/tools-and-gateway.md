@@ -67,7 +67,7 @@ The starter config aggregates these MCP backends behind `:3030` (UI on `:15000`)
 
 | Target | Backend | Notes |
 |--------|---------|-------|
-| `playwright` | `@playwright/mcp` (npx) | Browser automation. |
+| `playwright` | `@playwright/mcp` (npx, pinned to the Docker image's version) | Browser automation. In the image it runs headless Chromium (`PLAYWRIGHT_MCP_BROWSER`/`_HEADLESS` in the Dockerfile). |
 | `filesystem` | `mcp-server-filesystem` over **SSH** to the OpenShell sandbox | Read/write/edit/list, scoped to `/sandbox` **inside the sandbox**. |
 | `fetch` | `mcp-server-fetch` (uvx, pinned to `mcp<2`) | HTTP fetch. |
 | `rag` | `mcp-server-qdrant` (uvx) | `qdrant-store` (write/poison) + `qdrant-find` (retrieval). See [rag.md](rag.md). |
@@ -85,8 +85,25 @@ import — and AgentGateway reports a failed stdio target as a 500 on the *aggre
 endpoint, which leaves **every** target with zero tools. If you ever see all five
 targets at `0`, suspect one broken server rather than five.
 
+### The rendered config
+
 You own `agentgateway/config.yaml` — add targets, policies, auth, and observability
-there for the tools you want to exercise.
+there for the tools you want to exercise. `serve` does not launch that file directly.
+It writes a rendered copy to `.redcell/agentgateway.yaml`
+(`AGENT_GATEWAY_EFFECTIVE_CONFIG_PATH`) just before starting the gateway, with two
+changes (`redcell/gatewayconfig.py`):
+
+- **Targets that cannot start are dropped.** Because one failing stdio target takes
+  down the aggregated endpoint, the SSH targets (`filesystem`, `shell`) are left out
+  when the sandbox is not up, and any target whose command (`npx`, `uvx`, `ssh`, or the
+  command after an `env` wrapper) is not on `PATH` is left out too. Each skip is logged
+  with its reason; the other targets keep working.
+- **`QDRANT_URL=` is filled in** from `AGENT_QDRANT_HOST`/`AGENT_QDRANT_PORT`. Qdrant is
+  `127.0.0.1` in host mode but the `qdrant` service inside the compose stack, and
+  AgentGateway has no env interpolation of its own.
+
+If the file cannot be parsed, `serve` launches it unmodified so AgentGateway reports
+the real error.
 
 ### Setting up the execution sandbox
 
@@ -95,12 +112,11 @@ sandbox. `redcell serve` creates it and writes the SSH config the gateway launch
 servers through, so there is nothing to hand-maintain in `~/.ssh/config` and no key
 material anywhere — the OpenShell gateway authenticates the tunnel.
 
-One one-time step, then bring the gateway up:
-
-1. **Build the sandbox image** (not a compose service — the OpenShell gateway builds
-   sandboxes as sibling containers on demand, it doesn't build this one):
+1. **Build the sandbox image.** The compose stack does this for you: the one-shot
+   `sandbox-image` service builds `redcell-sandbox:local` and the OpenShell gateway
+   waits for it. In host mode, or after editing `sandbox/`, build it yourself:
    ```bash
-   docker build -t redcell-sandbox:local sandbox/
+   docker compose build sandbox-image   # or: docker build -t redcell-sandbox:local sandbox/
    ```
 
 2. **Start the OpenShell gateway:**
@@ -171,7 +187,6 @@ its MCP server didn't start (missing runtime or unreachable OpenShell sandbox). 
 [cli.md](cli.md#redcell-doctor).
 
 **`docker compose up -d` provides `agentgateway` (as a child process inside the
-`redcell` container), Qdrant, and the OpenShell gateway automatically** — the sandbox
-image build (`docker build -t redcell-sandbox:local sandbox/`) is the one manual step
-left in either mode. Host mode (`uv run redcell serve`) still needs `agentgateway`,
+`redcell` container), Qdrant, the OpenShell gateway, and the sandbox image
+automatically.** Host mode (`uv run redcell serve`) still needs `agentgateway`,
 `npx`, `uvx`, `openshell`, and `ssh` on your `PATH` individually, as in the table above.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 logger = logging.getLogger("redcell.gateway")
 
@@ -17,7 +18,10 @@ class GatewaySupervisor:
     """Start, health-check, and stop the AgentGateway process.
 
     Args:
-        command: the full argv to spawn, e.g. ``["agentgateway", "-f", "config.yaml"]``.
+        command: the full argv to spawn, e.g. ``["agentgateway", "-f", "config.yaml"]``,
+            or a zero-arg callable returning it. A callable is invoked in
+            :meth:`start`, so the argv can depend on state settled earlier in the
+            lifespan (``serve`` renders the effective config there).
         host: host the gateway MCP proxy binds (for the readiness probe).
         port: port the gateway MCP proxy binds.
         ready_timeout: seconds to wait for the port to accept connections.
@@ -25,12 +29,13 @@ class GatewaySupervisor:
 
     def __init__(
         self,
-        command: list[str],
+        command: list[str] | Callable[[], list[str]],
         host: str,
         port: int,
         ready_timeout: float = 30.0,
     ) -> None:
-        self._command = list(command)
+        self._command_source = command
+        self._command: list[str] = [] if callable(command) else list(command)
         self._host = host
         self._port = port
         self._ready_timeout = ready_timeout
@@ -38,6 +43,8 @@ class GatewaySupervisor:
         self.available = False
 
     async def start(self) -> None:
+        if callable(self._command_source):
+            self._command = list(self._command_source())
         try:
             self._proc = await asyncio.create_subprocess_exec(*self._command)
         except FileNotFoundError:

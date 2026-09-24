@@ -108,7 +108,7 @@ def create_app(
     app = FastAPI(title="redcell OpenAI-compatible API", lifespan=lifespan)
 
     def _auth(authorization: str | None = Header(default=None)) -> None:
-        if api_key is None:
+        if not api_key:  # None or blank: auth is off
             return
         if authorization != f"Bearer {api_key}":
             raise HTTPException(status_code=401, detail="Invalid or missing API key")

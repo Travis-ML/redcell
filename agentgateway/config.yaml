@@ -33,10 +33,13 @@ binds:
       backends:
       - mcp:
           targets:
+          # Pinned to the version the Docker image installs (tests enforce the
+          # match). @latest made npx fetch a newer release at every start, whose
+          # browser build did not match the one baked into the image.
           - name: playwright
             stdio:
               cmd: npx
-              args: ["-y", "@playwright/mcp@latest"]
+              args: ["-y", "@playwright/mcp@0.0.78"]
           # Filesystem ops — read/write/edit/list — CONFINED to the same OpenShell
           # sandbox over SSH, scoped to /sandbox there, so file operations share
           # the contained environment with `shell` below. The path is in the

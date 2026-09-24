@@ -8,6 +8,8 @@ All runtime configuration lives in `redcell/config.py` as a Pydantic
 3. The **defaults** below.
 
 Unknown keys are ignored (`extra="ignore"`), so unrelated env vars are harmless.
+A blank value (`AGENT_SERVER_API_KEY=`) counts as unset, so the blank placeholders in
+`.env.example` leave each setting at its default.
 Provider credentials such as `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are **not**
 redcell settings — LiteLLM reads them directly from the environment.
 
@@ -101,7 +103,8 @@ agent to its aggregated MCP endpoint. See [tools-and-gateway.md](tools-and-gatew
 | Env var | Type | Default | Meaning |
 |---------|------|---------|---------|
 | `AGENT_GATEWAY_BIN` | str | `agentgateway` | Gateway executable (must be on `PATH`). |
-| `AGENT_GATEWAY_CONFIG` | str | `agentgateway/config.yaml` | Gateway config file passed as `-f`. |
+| `AGENT_GATEWAY_CONFIG_PATH` | str | `agentgateway/config.yaml` | The gateway config you own and edit. |
+| `AGENT_GATEWAY_EFFECTIVE_CONFIG_PATH` | str | `.redcell/agentgateway.yaml` | Rendered copy `serve` actually passes as `-f`: targets that cannot start are dropped and `QDRANT_URL` is filled in from `AGENT_QDRANT_HOST`/`_PORT`. Generated at every start; do not edit. |
 | `AGENT_GATEWAY_HOST` | str | `127.0.0.1` | Host for the readiness probe. |
 | `AGENT_GATEWAY_PORT` | int | `3030` | Port for the readiness probe. |
 | `AGENT_GATEWAY_URL` | str | `http://127.0.0.1:3030/mcp` | The aggregated MCP endpoint the agent connects to. Tune the path (root vs `/mcp`) to match your gateway config. |
@@ -114,7 +117,7 @@ agent to its aggregated MCP endpoint. See [tools-and-gateway.md](tools-and-gatew
 | `AGENT_OPENSHELL_GATEWAY_NAME` | str | `redcell` | Local name the gateway is registered under. |
 | `AGENT_OPENSHELL_SANDBOX` | str | `redcell-sbx` | Sandbox name to create or reuse. |
 | `AGENT_OPENSHELL_WORKSPACE` | str | `default` | OpenShell workspace. Part of the generated SSH host alias. |
-| `AGENT_OPENSHELL_IMAGE` | str | `redcell-sandbox:local` | Sandbox image; build with `docker build -t redcell-sandbox:local sandbox/`. |
+| `AGENT_OPENSHELL_IMAGE` | str | `redcell-sandbox:local` | Sandbox image. The compose stack builds it (`sandbox-image` service); in host mode run `docker build -t redcell-sandbox:local sandbox/`. |
 | `AGENT_OPENSHELL_POLICY_PATH` | str | `sandbox/policy.yaml` | Policy applied at sandbox creation. |
 | `AGENT_OPENSHELL_SSH_CONFIG_PATH` | str | `.redcell/openshell_ssh_config` | Where the generated SSH config is written; `agentgateway/config.yaml` points `ssh -F` at it. |
 | `AGENT_OPENSHELL_READY_TIMEOUT` | float | `60.0` | Seconds to wait for the gateway health endpoint. |
